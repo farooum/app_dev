@@ -6,6 +6,7 @@
 <style>
   body { font-family: Arial, sans-serif; background: #0d1117; color: #e6edf3; padding: 20px; }
   h2 { color: #58a6ff; }
+  h3 { color: #58a6ff; margin-top: 30px; }
   .toggle-group { margin: 15px 0; }
   .toggle-btn {
     padding: 10px 25px; margin-right: 10px; border: 1px solid #30363d;
@@ -37,6 +38,22 @@
     50% { opacity: 0.4; }
     100% { opacity: 1; }
   }
+  #marketBiasPanel {
+    margin-top: 15px;
+    padding: 18px;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    background: #161b22;
+  }
+  .bias-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #21262d; }
+  .bias-row:last-child { border-bottom: none; }
+  .bias-label { color: #8b949e; }
+  .bias-value { font-weight: bold; }
+  .bias-bullish { color: #3fb950; }
+  .bias-bearish { color: #f85149; }
+  .bias-neutral { color: #d29922; }
+  #biasNote { font-size: 12px; color: #8b949e; margin-top: 10px; }
+  #biasStatus { margin-top: 10px; font-size: 13px; color: #8b949e; }
 </style>
 </head>
 <body>
@@ -54,42 +71,73 @@
 <div id="alertBanner"></div>
 
 <table id="optionTable">
-  <thead id="tableHead"></thead>
-  <tbody id="tableBody"></tbody>
+  <thead id="tableHead">
+  </thead>
+  <tbody id="tableBody">
+  </tbody>
 </table>
 
 <div id="status">Waiting for first update...</div>
 
+<h3>Market Bias (Experimental Indicator)</h3>
+<div id="marketBiasPanel">
+  <div class="bias-row">
+    <span class="bias-label">EMA(24) vs EMA(48) Signal:</span>
+    <span class="bias-value" id="emaSignalVal">Loading...</span>
+  </div>
+  <div class="bias-row">
+    <span class="bias-label">Supertrend(8,3) Signal:</span>
+    <span class="bias-value" id="stSignalVal">Loading...</span>
+  </div>
+  <div class="bias-row">
+    <span class="bias-label">Combined Market Bias:</span>
+    <span class="bias-value" id="combinedBiasVal">Loading...</span>
+  </div>
+  <div id="biasNote">
+    Based on BTCUSD 15-minute candles. Bias updates every 30 seconds. This is an experimental heuristic indicator, not an official Delta Exchange signal, and should not be treated as guaranteed trading advice.
+  </div>
+</div>
+<div id="biasStatus">Waiting for first bias update...</div>
+
 <script>
 const BASE_URL = "https://api.india.delta.exchange/v2/tickers";
+const CANDLE_URL = "https://api.india.delta.exchange/v2/history/candles";
 const UNDERLYING = "BTC";
 const STRIKE_GAP = 200;
 const REFRESH_INTERVAL_MS = 5000;
 
+// Alert rule thresholds
 const ATM_MIN = 100;
 const ATM_MAX = 150;
-const OTM_PCT_MAX = 50;
+const OTM_PCT_MAX = 50; // OTM premium must be less than this % of ATM
 
-let currentMode = 'long';
+// Market Bias indicator settings
+const CANDLE_SYMBOL = "BTCUSD";
+const CANDLE_RESOLUTION = "15m";
+const EMA_SHORT_PERIOD = 24;
+const EMA_LONG_PERIOD = 48;
+const ST_ATR_PERIOD = 8;
+const ST_MULTIPLIER = 3;
+const CANDLE_FETCH_COUNT = 300; // warm-up bars for EMA/ATR convergence
+const INDICATOR_REFRESH_MS = 30000;
+
+let currentMode = 'long'; // 'long' or 'short'
 let latestData = null;
-let alertActive = false;
+let alertActive = false; // tracks current alert state for edge-trigger sound
 
 function parseExpiryFromSymbol(symbol) {
   const parts = symbol.split('-');
   const dateStr = parts[parts.length - 1];
   if (dateStr.length !== 6) return null;
-
   const dd = parseInt(dateStr.substring(0, 2), 10);
   const mm = parseInt(dateStr.substring(2, 4), 10) - 1;
   const yy = parseInt(dateStr.substring(4, 6), 10) + 2000;
-
   return new Date(yy, mm, dd);
 }
 
 function findClosestStrike(strikes, spot) {
   let closest = null;
   let minDiff = Infinity;
-
   strikes.forEach(s => {
     const diff = Math.abs(s - spot);
     if (diff < minDiff) {
@@ -97,93 +145,57 @@ function findClosestStrike(strikes, spot) {
       closest = s;
     }
   });
-
   return closest;
 }
 
 function setMode(mode) {
   currentMode = mode;
-
-  document.getElementById('longBtn').classList.toggle(
-    'active-long',
-    mode === 'long'
-  );
-
-  document.getElementById('shortBtn').classList.toggle(
-    'active-short',
-    mode === 'short'
-  );
-
+  document.getElementById('longBtn').classList.toggle('active-long', mode === 'long');
+  document.getElementById('shortBtn').classList.toggle('active-short', mode === 'short');
   alertActive = false;
   document.getElementById('alertBanner').style.display = 'none';
-
   if (latestData) {
     renderTable(latestData);
   }
 }
 
-document.getElementById('longBtn')
-  .addEventListener('click', () => setMode('long'));
-
-document.getElementById('shortBtn')
-  .addEventListener('click', () => setMode('short'));
+document.getElementById('longBtn').addEventListener('click', () => setMode('long'));
+document.getElementById('shortBtn').addEventListener('click', () => setMode('short'));
 
 function playBeep() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-
     const oscillator = ctx.createOscillator();
     const gainNode = ctx.createGain();
-
     oscillator.connect(gainNode);
     gainNode.connect(ctx.destination);
-
     oscillator.type = 'sine';
     oscillator.frequency.value = 880;
     gainNode.gain.value = 0.3;
-
     oscillator.start();
-
     setTimeout(() => {
       oscillator.stop();
       ctx.close();
     }, 400);
-
   } catch (e) {
     console.warn('Audio playback failed:', e);
   }
 }
 
 function renderTable(context) {
-
-  const {
-    strikeMap,
-    atmStrike,
-    spotPrice,
-    expiryDisplayStr,
-    isZeroDTE
-  } = context;
+  const { strikeMap, atmStrike, spotPrice, expiryDisplayStr, isZeroDTE } = context;
 
   document.getElementById('spotInfo').textContent =
-    `Spot Price: ${Math.round(spotPrice)} | ATM Strike: ${atmStrike}`;
+    `Spot Price: ${Math.round(spotPrice)} | ATM Strike: ${Math.round(atmStrike)}`;
 
-  document.getElementById('expiryInfo').textContent =
-    isZeroDTE
-      ? `Showing 0DTE expiry: ${expiryDisplayStr}`
-      : `No 0DTE expiry today. Showing nearest available expiry: ${expiryDisplayStr}`;
+  document.getElementById('expiryInfo').textContent = isZeroDTE
+    ? `Showing 0DTE expiry: ${expiryDisplayStr}`
+    : `No 0DTE expiry today. Showing nearest available expiry: ${expiryDisplayStr}`;
 
   const optionSide = currentMode === 'long' ? 'put' : 'call';
-  const otmStrike = currentMode === 'long'
-    ? (atmStrike - STRIKE_GAP)
-    : (atmStrike + STRIKE_GAP);
-
-  const otmLabel = currentMode === 'long'
-    ? 'ATM - 200'
-    : 'ATM + 200';
-
-  const sideLabel = currentMode === 'long'
-    ? 'Put'
-    : 'Call';
+  const otmStrike = currentMode === 'long' ? (atmStrike - STRIKE_GAP) : (atmStrike + STRIKE_GAP);
+  const otmLabel = currentMode === 'long' ? 'ATM - 200' : 'ATM + 200';
+  const sideLabel = currentMode === 'long' ? 'Put' : 'Call';
 
   document.getElementById('tableHead').innerHTML = `
     <tr>
@@ -195,60 +207,31 @@ function renderTable(context) {
     </tr>
   `;
 
-  const atmEntry = strikeMap[atmStrike]
-    ? strikeMap[atmStrike][optionSide]
-    : null;
+  const atmEntry = strikeMap[atmStrike] ? strikeMap[atmStrike][optionSide] : null;
+  const otmEntry = strikeMap[otmStrike] ? strikeMap[otmStrike][optionSide] : null;
 
-  const otmEntry = strikeMap[otmStrike]
-    ? strikeMap[otmStrike][optionSide]
-    : null;
-
-  const atmMark = atmEntry
-    ? parseFloat(atmEntry.mark_price)
-    : null;
-
-  const otmMark = otmEntry
-    ? parseFloat(otmEntry.mark_price)
-    : null;
-
-  const otmPctNumeric =
-    (otmMark !== null && atmMark)
-      ? (otmMark / atmMark) * 100
-      : null;
+  const atmMark = atmEntry ? parseFloat(atmEntry.mark_price) : null;
+  const otmMark = otmEntry ? parseFloat(otmEntry.mark_price) : null;
+  const otmPctNumeric = (otmMark !== null && atmMark) ? (otmMark / atmMark) * 100 : null;
 
   const rows = [
-    {
-      label: 'ATM',
-      strike: atmStrike,
-      entry: atmEntry,
-      pct: atmEntry ? '100%' : 'N/A'
-    },
+    { label: 'ATM', strike: atmStrike, entry: atmEntry, pct: atmEntry ? '100.0%' : 'N/A' },
     {
       label: otmLabel,
       strike: otmStrike,
       entry: otmEntry,
-      pct: otmPctNumeric !== null
-        ? Math.round(otmPctNumeric) + '%'
-        : 'N/A'
+      pct: (otmPctNumeric !== null) ? otmPctNumeric.toFixed(1) + '%' : 'N/A'
     }
   ];
 
   let html = '';
-
   rows.forEach(row => {
-
-    const mark = row.entry
-      ? Math.round(parseFloat(row.entry.mark_price))
-      : 'N/A';
-
-    const ltp = row.entry
-      ? Math.round(parseFloat(row.entry.close))
-      : 'N/A';
-
+    const mark = row.entry ? Math.round(parseFloat(row.entry.mark_price)) : 'N/A';
+    const ltp = row.entry ? Math.round(parseFloat(row.entry.close)) : 'N/A';
     html += `
       <tr>
         <td>${row.label}</td>
-        <td>${row.strike}</td>
+        <td>${Math.round(row.strike)}</td>
         <td>${mark}</td>
         <td>${ltp}</td>
         <td>${row.pct}</td>
@@ -257,7 +240,6 @@ function renderTable(context) {
   });
 
   document.getElementById('tableBody').innerHTML = html;
-
   document.getElementById('status').textContent =
     `Last updated: ${new Date().toLocaleTimeString()}`;
 
@@ -271,18 +253,15 @@ function renderTable(context) {
   const banner = document.getElementById('alertBanner');
 
   if (conditionMet) {
-
     banner.style.display = 'block';
-
     banner.textContent =
       `ALERT: ATM ${sideLabel} Mark Price (${Math.round(atmMark)}) is between ${ATM_MIN}-${ATM_MAX}, ` +
-      `and ${otmLabel} ${sideLabel} premium is ${Math.round(otmPctNumeric)}% of ATM (below ${OTM_PCT_MAX}%).`;
+      `and ${otmLabel} ${sideLabel} premium is ${otmPctNumeric.toFixed(1)}% of ATM (below ${OTM_PCT_MAX}%).`;
 
     if (!alertActive) {
       playBeep();
       alertActive = true;
     }
-
   } else {
     banner.style.display = 'none';
     alertActive = false;
@@ -290,143 +269,288 @@ function renderTable(context) {
 }
 
 async function fetchOptionChain() {
-
-  const url =
-    `${BASE_URL}?contract_types=call_options,put_options&underlying_asset_symbols=${UNDERLYING}`;
+  const url = `${BASE_URL}?contract_types=call_options,put_options&underlying_asset_symbols=${UNDERLYING}`;
 
   try {
-
     const response = await fetch(url);
-
     if (!response.ok) {
       throw new Error(`HTTP error: ${response.status}`);
     }
-
     const data = await response.json();
 
     if (!data.success || !data.result || data.result.length === 0) {
-
-      document.getElementById('error').textContent =
-        'No live BTC option data found.';
-
+      document.getElementById('error').textContent = `No live BTC option data found.`;
       document.getElementById('tableBody').innerHTML = '';
       document.getElementById('tableHead').innerHTML = '';
       document.getElementById('spotInfo').textContent = '';
       document.getElementById('expiryInfo').textContent = '';
-
       return;
     }
 
     document.getElementById('error').textContent = '';
 
     const tickers = data.result;
-
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     const expiryGroups = {};
-
     tickers.forEach(t => {
-
       const expiryDate = parseExpiryFromSymbol(t.symbol);
-
       if (!expiryDate) return;
-
       const key = expiryDate.getTime();
-
-      if (!expiryGroups[key]) {
-        expiryGroups[key] = [];
-      }
-
+      if (!expiryGroups[key]) expiryGroups[key] = [];
       expiryGroups[key].push(t);
     });
 
-    const expiryKeys =
-      Object.keys(expiryGroups)
-      .map(Number)
-      .sort((a, b) => a - b);
-
+    const expiryKeys = Object.keys(expiryGroups).map(Number).sort((a, b) => a - b);
     let chosenExpiryKey = null;
-
     for (const key of expiryKeys) {
       if (key >= today.getTime()) {
         chosenExpiryKey = key;
         break;
       }
     }
-
     if (chosenExpiryKey === null && expiryKeys.length > 0) {
       chosenExpiryKey = expiryKeys[expiryKeys.length - 1];
     }
 
     if (chosenExpiryKey === null) {
-      document.getElementById('error').textContent =
-        'Could not determine any valid expiry.';
+      document.getElementById('error').textContent = 'Could not determine any valid expiry from live BTC options.';
       return;
     }
 
     const chosenExpiryDate = new Date(chosenExpiryKey);
+    const isZeroDTE = chosenExpiryDate.getTime() === today.getTime();
+    const expiryDisplayStr = chosenExpiryDate.toLocaleDateString('en-GB');
 
-    const isZeroDTE =
-      chosenExpiryDate.getTime() === today.getTime();
-
-    const expiryDisplayStr =
-      chosenExpiryDate.toLocaleDateString('en-GB');
-
-    const relevantTickers =
-      expiryGroups[chosenExpiryKey];
-
-    const spotPrice =
-      parseFloat(relevantTickers[0].spot_price);
+    const relevantTickers = expiryGroups[chosenExpiryKey];
+    const spotPrice = parseFloat(relevantTickers[0].spot_price);
 
     const strikeMap = {};
     const strikeSet = new Set();
 
     relevantTickers.forEach(t => {
-
-      const strike =
-        parseFloat(t.strike_price);
-
+      const strike = parseFloat(t.strike_price);
       strikeSet.add(strike);
-
-      if (!strikeMap[strike]) {
-        strikeMap[strike] = {};
-      }
-
+      if (!strikeMap[strike]) strikeMap[strike] = {};
       if (t.contract_type === 'call_options') {
         strikeMap[strike].call = t;
-      }
-
-      if (t.contract_type === 'put_options') {
+      } else if (t.contract_type === 'put_options') {
         strikeMap[strike].put = t;
       }
     });
 
     const strikesArray = Array.from(strikeSet);
+    const atmStrike = findClosestStrike(strikesArray, spotPrice);
 
-    const atmStrike =
-      findClosestStrike(strikesArray, spotPrice);
-
-    latestData = {
-      strikeMap,
-      atmStrike,
-      spotPrice,
-      expiryDisplayStr,
-      isZeroDTE
-    };
-
+    latestData = { strikeMap, atmStrike, spotPrice, expiryDisplayStr, isZeroDTE };
     renderTable(latestData);
 
   } catch (err) {
-
     document.getElementById('error').textContent =
       `Error fetching data: ${err.message}`;
+  }
+}
+
+// ---------- Market Bias Indicator Logic ----------
+
+function calculateEMA(values, period) {
+  const emaArray = new Array(values.length).fill(null);
+  if (values.length < period) return emaArray;
+  const k = 2 / (period + 1);
+  let sum = 0;
+  for (let i = 0; i < period; i++) sum += values[i];
+  let prevEma = sum / period;
+  emaArray[period - 1] = prevEma;
+  for (let i = period; i < values.length; i++) {
+    const ema = values[i] * k + prevEma * (1 - k);
+    emaArray[i] = ema;
+    prevEma = ema;
+  }
+  return emaArray;
+}
+
+function calculateATR(candles, period) {
+  const atrArray = new Array(candles.length).fill(null);
+  const trArray = new Array(candles.length).fill(null);
+
+  for (let i = 0; i < candles.length; i++) {
+    if (i === 0) {
+      trArray[i] = candles[i].high - candles[i].low;
+      continue;
+    }
+    const highLow = candles[i].high - candles[i].low;
+    const highPrevClose = Math.abs(candles[i].high - candles[i - 1].close);
+    const lowPrevClose = Math.abs(candles[i].low - candles[i - 1].close);
+    trArray[i] = Math.max(highLow, highPrevClose, lowPrevClose);
+  }
+
+  if (candles.length < period) return atrArray;
+
+  let sum = 0;
+  for (let i = 0; i < period; i++) sum += trArray[i];
+  let prevAtr = sum / period;
+  atrArray[period - 1] = prevAtr;
+
+  for (let i = period; i < candles.length; i++) {
+    const atr = (prevAtr * (period - 1) + trArray[i]) / period;
+    atrArray[i] = atr;
+    prevAtr = atr;
+  }
+  return atrArray;
+}
+
+function calculateSupertrend(candles, atrPeriod, multiplier) {
+  const atrArray = calculateATR(candles, atrPeriod);
+  const result = new Array(candles.length).fill(null);
+
+  let prevFinalUpper = null;
+  let prevFinalLower = null;
+  let prevSupertrend = null;
+  let prevTrend = null;
+
+  for (let i = 0; i < candles.length; i++) {
+    if (atrArray[i] === null) {
+      result[i] = null;
+      continue;
+    }
+
+    const hl2 = (candles[i].high + candles[i].low) / 2;
+    const basicUpper = hl2 + multiplier * atrArray[i];
+    const basicLower = hl2 - multiplier * atrArray[i];
+
+    let finalUpper, finalLower;
+    if (prevFinalUpper === null) {
+      finalUpper = basicUpper;
+      finalLower = basicLower;
+    } else {
+      const prevClose = candles[i - 1].close;
+      finalUpper = (basicUpper < prevFinalUpper || prevClose > prevFinalUpper) ? basicUpper : prevFinalUpper;
+      finalLower = (basicLower > prevFinalLower || prevClose < prevFinalLower) ? basicLower : prevFinalLower;
+    }
+
+    let supertrend, trend;
+    if (prevSupertrend === null) {
+      if (candles[i].close <= finalUpper) {
+        supertrend = finalUpper;
+        trend = 'down';
+      } else {
+        supertrend = finalLower;
+        trend = 'up';
+      }
+    } else if (prevTrend === 'down') {
+      if (candles[i].close <= finalUpper) {
+        supertrend = finalUpper;
+        trend = 'down';
+      } else {
+        supertrend = finalLower;
+        trend = 'up';
+      }
+    } else {
+      if (candles[i].close >= finalLower) {
+        supertrend = finalLower;
+        trend = 'up';
+      } else {
+        supertrend = finalUpper;
+        trend = 'down';
+      }
+    }
+
+    result[i] = { line: supertrend, trend: trend };
+    prevFinalUpper = finalUpper;
+    prevFinalLower = finalLower;
+    prevSupertrend = supertrend;
+    prevTrend = trend;
+  }
+
+  return result;
+}
+
+function setBiasClass(elementId, signal) {
+  const el = document.getElementById(elementId);
+  el.classList.remove('bias-bullish', 'bias-bearish', 'bias-neutral');
+  if (signal === 'Bullish') el.classList.add('bias-bullish');
+  else if (signal === 'Bearish') el.classList.add('bias-bearish');
+  else el.classList.add('bias-neutral');
+  el.textContent = signal;
+}
+
+async function fetchCandlesAndComputeBias() {
+  try {
+    const end = Math.floor(Date.now() / 1000);
+    const start = end - CANDLE_FETCH_COUNT * 15 * 60;
+    const url = `${CANDLE_URL}?resolution=${CANDLE_RESOLUTION}&symbol=${CANDLE_SYMBOL}&start=${start}&end=${end}`;
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP error: ${response.status}`);
+    }
+    const data = await response.json();
+
+    if (!data.success || !data.result || data.result.length === 0) {
+      setBiasClass('emaSignalVal', 'N/A');
+      setBiasClass('stSignalVal', 'N/A');
+      setBiasClass('combinedBiasVal', 'N/A');
+      document.getElementById('biasStatus').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+      return;
+    }
+
+    const candles = data.result.slice().sort((a, b) => a.time - b.time);
+
+    if (candles.length < EMA_LONG_PERIOD + 5) {
+      setBiasClass('emaSignalVal', 'Insufficient Data');
+      setBiasClass('stSignalVal', 'Insufficient Data');
+      setBiasClass('combinedBiasVal', 'Insufficient Data');
+      document.getElementById('biasStatus').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+      return;
+    }
+
+    const closes = candles.map(c => c.close);
+    const emaShortArr = calculateEMA(closes, EMA_SHORT_PERIOD);
+    const emaLongArr = calculateEMA(closes, EMA_LONG_PERIOD);
+    const stArr = calculateSupertrend(candles, ST_ATR_PERIOD, ST_MULTIPLIER);
+
+    const lastIdx = candles.length - 1;
+    const emaShortLast = emaShortArr[lastIdx];
+    const emaLongLast = emaLongArr[lastIdx];
+    const stLast = stArr[lastIdx];
+
+    if (emaShortLast === null || emaLongLast === null || stLast === null) {
+      setBiasClass('emaSignalVal', 'Insufficient Data');
+      setBiasClass('stSignalVal', 'Insufficient Data');
+      setBiasClass('combinedBiasVal', 'Insufficient Data');
+      document.getElementById('biasStatus').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+      return;
+    }
+
+    const emaSignal = emaShortLast > emaLongLast ? 'Bullish' : (emaShortLast < emaLongLast ? 'Bearish' : 'Neutral');
+    const stSignal = stLast.trend === 'up' ? 'Bullish' : 'Bearish';
+
+    let combined = 'Neutral/Mixed';
+    if (emaSignal === 'Bullish' && stSignal === 'Bullish') combined = 'Bullish';
+    else if (emaSignal === 'Bearish' && stSignal === 'Bearish') combined = 'Bearish';
+
+    setBiasClass('emaSignalVal', emaSignal);
+    setBiasClass('stSignalVal', stSignal);
+    setBiasClass('combinedBiasVal', combined);
+
+    document.getElementById('biasStatus').textContent =
+      `Last updated: ${new Date().toLocaleTimeString()}`;
+
+  } catch (err) {
+    setBiasClass('emaSignalVal', 'Error');
+    setBiasClass('stSignalVal', 'Error');
+    setBiasClass('combinedBiasVal', 'Error');
+    document.getElementById('biasStatus').textContent = `Last updated: ${new Date().toLocaleTimeString()} (error)`;
+    console.warn('Bias calculation error:', err.message);
   }
 }
 
 fetchOptionChain();
 setInterval(fetchOptionChain, REFRESH_INTERVAL_MS);
 
+fetchCandlesAndComputeBias();
+setInterval(fetchCandlesAndComputeBias, INDICATOR_REFRESH_MS);
 </script>
 
 </body>
