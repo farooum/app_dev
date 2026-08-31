@@ -54,10 +54,8 @@
 <div id="alertBanner"></div>
 
 <table id="optionTable">
-  <thead id="tableHead">
-  </thead>
-  <tbody id="tableBody">
-  </tbody>
+  <thead id="tableHead"></thead>
+  <tbody id="tableBody"></tbody>
 </table>
 
 <div id="status">Waiting for first update...</div>
@@ -68,28 +66,30 @@ const UNDERLYING = "BTC";
 const STRIKE_GAP = 200;
 const REFRESH_INTERVAL_MS = 5000;
 
-// Alert rule thresholds
 const ATM_MIN = 100;
 const ATM_MAX = 150;
-const OTM_PCT_MAX = 50; // OTM premium must be less than this % of ATM
+const OTM_PCT_MAX = 50;
 
-let currentMode = 'long'; // 'long' or 'short'
+let currentMode = 'long';
 let latestData = null;
-let alertActive = false; // tracks current alert state for edge-trigger sound
+let alertActive = false;
 
 function parseExpiryFromSymbol(symbol) {
   const parts = symbol.split('-');
   const dateStr = parts[parts.length - 1];
   if (dateStr.length !== 6) return null;
+
   const dd = parseInt(dateStr.substring(0, 2), 10);
   const mm = parseInt(dateStr.substring(2, 4), 10) - 1;
   const yy = parseInt(dateStr.substring(4, 6), 10) + 2000;
+
   return new Date(yy, mm, dd);
 }
 
 function findClosestStrike(strikes, spot) {
   let closest = null;
   let minDiff = Infinity;
+
   strikes.forEach(s => {
     const diff = Math.abs(s - spot);
     if (diff < minDiff) {
@@ -97,58 +97,93 @@ function findClosestStrike(strikes, spot) {
       closest = s;
     }
   });
+
   return closest;
 }
 
 function setMode(mode) {
   currentMode = mode;
-  document.getElementById('longBtn').classList.toggle('active-long', mode === 'long');
-  document.getElementById('shortBtn').classList.toggle('active-short', mode === 'short');
-  alertActive = false; // reset alert state on mode switch to avoid stale banner
+
+  document.getElementById('longBtn').classList.toggle(
+    'active-long',
+    mode === 'long'
+  );
+
+  document.getElementById('shortBtn').classList.toggle(
+    'active-short',
+    mode === 'short'
+  );
+
+  alertActive = false;
   document.getElementById('alertBanner').style.display = 'none';
+
   if (latestData) {
     renderTable(latestData);
   }
 }
 
-document.getElementById('longBtn').addEventListener('click', () => setMode('long'));
-document.getElementById('shortBtn').addEventListener('click', () => setMode('short'));
+document.getElementById('longBtn')
+  .addEventListener('click', () => setMode('long'));
 
-// Simple beep using Web Audio API (no external audio file needed)
+document.getElementById('shortBtn')
+  .addEventListener('click', () => setMode('short'));
+
 function playBeep() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
     const oscillator = ctx.createOscillator();
     const gainNode = ctx.createGain();
+
     oscillator.connect(gainNode);
     gainNode.connect(ctx.destination);
+
     oscillator.type = 'sine';
     oscillator.frequency.value = 880;
     gainNode.gain.value = 0.3;
+
     oscillator.start();
+
     setTimeout(() => {
       oscillator.stop();
       ctx.close();
     }, 400);
+
   } catch (e) {
     console.warn('Audio playback failed:', e);
   }
 }
 
 function renderTable(context) {
-  const { strikeMap, atmStrike, spotPrice, expiryDisplayStr, isZeroDTE } = context;
+
+  const {
+    strikeMap,
+    atmStrike,
+    spotPrice,
+    expiryDisplayStr,
+    isZeroDTE
+  } = context;
 
   document.getElementById('spotInfo').textContent =
-    `Spot Price: ${spotPrice} | ATM Strike: ${atmStrike}`;
+    `Spot Price: ${Math.round(spotPrice)} | ATM Strike: ${atmStrike}`;
 
-  document.getElementById('expiryInfo').textContent = isZeroDTE
-    ? `Showing 0DTE expiry: ${expiryDisplayStr}`
-    : `No 0DTE expiry today. Showing nearest available expiry: ${expiryDisplayStr}`;
+  document.getElementById('expiryInfo').textContent =
+    isZeroDTE
+      ? `Showing 0DTE expiry: ${expiryDisplayStr}`
+      : `No 0DTE expiry today. Showing nearest available expiry: ${expiryDisplayStr}`;
 
   const optionSide = currentMode === 'long' ? 'put' : 'call';
-  const otmStrike = currentMode === 'long' ? (atmStrike - STRIKE_GAP) : (atmStrike + STRIKE_GAP);
-  const otmLabel = currentMode === 'long' ? 'ATM - 200' : 'ATM + 200';
-  const sideLabel = currentMode === 'long' ? 'Put' : 'Call';
+  const otmStrike = currentMode === 'long'
+    ? (atmStrike - STRIKE_GAP)
+    : (atmStrike + STRIKE_GAP);
+
+  const otmLabel = currentMode === 'long'
+    ? 'ATM - 200'
+    : 'ATM + 200';
+
+  const sideLabel = currentMode === 'long'
+    ? 'Put'
+    : 'Call';
 
   document.getElementById('tableHead').innerHTML = `
     <tr>
@@ -160,27 +195,56 @@ function renderTable(context) {
     </tr>
   `;
 
-  const atmEntry = strikeMap[atmStrike] ? strikeMap[atmStrike][optionSide] : null;
-  const otmEntry = strikeMap[otmStrike] ? strikeMap[otmStrike][optionSide] : null;
+  const atmEntry = strikeMap[atmStrike]
+    ? strikeMap[atmStrike][optionSide]
+    : null;
 
-  const atmMark = atmEntry ? parseFloat(atmEntry.mark_price) : null;
-  const otmMark = otmEntry ? parseFloat(otmEntry.mark_price) : null;
-  const otmPctNumeric = (otmMark !== null && atmMark) ? (otmMark / atmMark) * 100 : null;
+  const otmEntry = strikeMap[otmStrike]
+    ? strikeMap[otmStrike][optionSide]
+    : null;
+
+  const atmMark = atmEntry
+    ? parseFloat(atmEntry.mark_price)
+    : null;
+
+  const otmMark = otmEntry
+    ? parseFloat(otmEntry.mark_price)
+    : null;
+
+  const otmPctNumeric =
+    (otmMark !== null && atmMark)
+      ? (otmMark / atmMark) * 100
+      : null;
 
   const rows = [
-    { label: 'ATM', strike: atmStrike, entry: atmEntry, pct: atmEntry ? '100.00%' : 'N/A' },
+    {
+      label: 'ATM',
+      strike: atmStrike,
+      entry: atmEntry,
+      pct: atmEntry ? '100%' : 'N/A'
+    },
     {
       label: otmLabel,
       strike: otmStrike,
       entry: otmEntry,
-      pct: (otmPctNumeric !== null) ? otmPctNumeric.toFixed(2) + '%' : 'N/A'
+      pct: otmPctNumeric !== null
+        ? Math.round(otmPctNumeric) + '%'
+        : 'N/A'
     }
   ];
 
   let html = '';
+
   rows.forEach(row => {
-    const mark = row.entry ? row.entry.mark_price : 'N/A';
-    const ltp = row.entry ? row.entry.close : 'N/A';
+
+    const mark = row.entry
+      ? Math.round(parseFloat(row.entry.mark_price))
+      : 'N/A';
+
+    const ltp = row.entry
+      ? Math.round(parseFloat(row.entry.close))
+      : 'N/A';
+
     html += `
       <tr>
         <td>${row.label}</td>
@@ -193,10 +257,10 @@ function renderTable(context) {
   });
 
   document.getElementById('tableBody').innerHTML = html;
+
   document.getElementById('status').textContent =
     `Last updated: ${new Date().toLocaleTimeString()}`;
 
-  // Alert rule evaluation
   const conditionMet =
     atmMark !== null &&
     atmMark > ATM_MIN &&
@@ -207,15 +271,18 @@ function renderTable(context) {
   const banner = document.getElementById('alertBanner');
 
   if (conditionMet) {
+
     banner.style.display = 'block';
+
     banner.textContent =
-      `ALERT: ATM ${sideLabel} Mark Price (${atmMark.toFixed(2)}) is between ${ATM_MIN}-${ATM_MAX}, ` +
-      `and ${otmLabel} ${sideLabel} premium is ${otmPctNumeric.toFixed(2)}% of ATM (below ${OTM_PCT_MAX}%).`;
+      `ALERT: ATM ${sideLabel} Mark Price (${Math.round(atmMark)}) is between ${ATM_MIN}-${ATM_MAX}, ` +
+      `and ${otmLabel} ${sideLabel} premium is ${Math.round(otmPctNumeric)}% of ATM (below ${OTM_PCT_MAX}%).`;
 
     if (!alertActive) {
       playBeep();
       alertActive = true;
     }
+
   } else {
     banner.style.display = 'none';
     alertActive = false;
@@ -223,84 +290,135 @@ function renderTable(context) {
 }
 
 async function fetchOptionChain() {
-  const url = `${BASE_URL}?contract_types=call_options,put_options&underlying_asset_symbols=${UNDERLYING}`;
+
+  const url =
+    `${BASE_URL}?contract_types=call_options,put_options&underlying_asset_symbols=${UNDERLYING}`;
 
   try {
+
     const response = await fetch(url);
+
     if (!response.ok) {
       throw new Error(`HTTP error: ${response.status}`);
     }
+
     const data = await response.json();
 
     if (!data.success || !data.result || data.result.length === 0) {
-      document.getElementById('error').textContent = `No live BTC option data found.`;
+
+      document.getElementById('error').textContent =
+        'No live BTC option data found.';
+
       document.getElementById('tableBody').innerHTML = '';
       document.getElementById('tableHead').innerHTML = '';
       document.getElementById('spotInfo').textContent = '';
       document.getElementById('expiryInfo').textContent = '';
+
       return;
     }
 
     document.getElementById('error').textContent = '';
 
     const tickers = data.result;
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     const expiryGroups = {};
+
     tickers.forEach(t => {
+
       const expiryDate = parseExpiryFromSymbol(t.symbol);
+
       if (!expiryDate) return;
+
       const key = expiryDate.getTime();
-      if (!expiryGroups[key]) expiryGroups[key] = [];
+
+      if (!expiryGroups[key]) {
+        expiryGroups[key] = [];
+      }
+
       expiryGroups[key].push(t);
     });
 
-    const expiryKeys = Object.keys(expiryGroups).map(Number).sort((a, b) => a - b);
+    const expiryKeys =
+      Object.keys(expiryGroups)
+      .map(Number)
+      .sort((a, b) => a - b);
+
     let chosenExpiryKey = null;
+
     for (const key of expiryKeys) {
       if (key >= today.getTime()) {
         chosenExpiryKey = key;
         break;
       }
     }
+
     if (chosenExpiryKey === null && expiryKeys.length > 0) {
       chosenExpiryKey = expiryKeys[expiryKeys.length - 1];
     }
 
     if (chosenExpiryKey === null) {
-      document.getElementById('error').textContent = 'Could not determine any valid expiry from live BTC options.';
+      document.getElementById('error').textContent =
+        'Could not determine any valid expiry.';
       return;
     }
 
     const chosenExpiryDate = new Date(chosenExpiryKey);
-    const isZeroDTE = chosenExpiryDate.getTime() === today.getTime();
-    const expiryDisplayStr = chosenExpiryDate.toLocaleDateString('en-GB');
 
-    const relevantTickers = expiryGroups[chosenExpiryKey];
-    const spotPrice = parseFloat(relevantTickers[0].spot_price);
+    const isZeroDTE =
+      chosenExpiryDate.getTime() === today.getTime();
+
+    const expiryDisplayStr =
+      chosenExpiryDate.toLocaleDateString('en-GB');
+
+    const relevantTickers =
+      expiryGroups[chosenExpiryKey];
+
+    const spotPrice =
+      parseFloat(relevantTickers[0].spot_price);
 
     const strikeMap = {};
     const strikeSet = new Set();
 
     relevantTickers.forEach(t => {
-      const strike = parseFloat(t.strike_price);
+
+      const strike =
+        parseFloat(t.strike_price);
+
       strikeSet.add(strike);
-      if (!strikeMap[strike]) strikeMap[strike] = {};
+
+      if (!strikeMap[strike]) {
+        strikeMap[strike] = {};
+      }
+
       if (t.contract_type === 'call_options') {
         strikeMap[strike].call = t;
-      } else if (t.contract_type === 'put_options') {
+      }
+
+      if (t.contract_type === 'put_options') {
         strikeMap[strike].put = t;
       }
     });
 
     const strikesArray = Array.from(strikeSet);
-    const atmStrike = findClosestStrike(strikesArray, spotPrice);
 
-    latestData = { strikeMap, atmStrike, spotPrice, expiryDisplayStr, isZeroDTE };
+    const atmStrike =
+      findClosestStrike(strikesArray, spotPrice);
+
+    latestData = {
+      strikeMap,
+      atmStrike,
+      spotPrice,
+      expiryDisplayStr,
+      isZeroDTE
+    };
+
     renderTable(latestData);
 
   } catch (err) {
+
     document.getElementById('error').textContent =
       `Error fetching data: ${err.message}`;
   }
@@ -308,6 +426,7 @@ async function fetchOptionChain() {
 
 fetchOptionChain();
 setInterval(fetchOptionChain, REFRESH_INTERVAL_MS);
+
 </script>
 
 </body>
