@@ -54,6 +54,56 @@
   .bias-neutral { color: #d29922; }
   #biasNote { font-size: 12px; color: #8b949e; margin-top: 10px; }
   #biasStatus { margin-top: 10px; font-size: 13px; color: #8b949e; }
+
+  #tradePanel {
+    margin-top: 15px;
+    padding: 18px;
+    border: 2px solid #da3633;
+    border-radius: 8px;
+    background: #161b22;
+  }
+  .security-warning {
+    background: #3d1f1f;
+    border: 1px solid #da3633;
+    color: #ffb3b0;
+    padding: 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    margin-bottom: 15px;
+  }
+  .form-row { margin-bottom: 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .form-row label { min-width: 140px; color: #8b949e; font-size: 14px; }
+  .form-row input {
+    background: #0d1117; border: 1px solid #30363d; color: #e6edf3;
+    padding: 8px; border-radius: 4px; flex: 1; min-width: 150px;
+  }
+  .action-btn {
+    padding: 12px 30px; margin-right: 10px; border: none;
+    color: #ffffff; cursor: pointer; font-size: 15px; border-radius: 6px; font-weight: bold;
+  }
+  .btn-long { background: #238636; }
+  .btn-short { background: #da3633; }
+  .btn-secondary { background: #30363d; color: #e6edf3; }
+  .action-btn:disabled { background: #21262d; color: #6e7681; cursor: not-allowed; }
+  #armStatus { margin-top: 10px; font-size: 13px; color: #d29922; }
+  #balanceStatus { margin-top: 10px; font-size: 13px; color: #8b949e; white-space: pre-wrap; }
+  #tradeLog {
+    margin-top: 15px; padding: 10px; background: #0d1117; border: 1px solid #30363d;
+    border-radius: 6px; font-size: 12px; max-height: 200px; overflow-y: auto; white-space: pre-wrap;
+  }
+
+  #modalOverlay {
+    display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center;
+  }
+  #modalBox {
+    background: #161b22; border: 2px solid #58a6ff; border-radius: 8px;
+    padding: 25px; max-width: 450px; width: 90%;
+  }
+  #modalBox h3 { margin-top: 0; }
+  .modal-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #21262d; font-size: 14px; }
+  .modal-row:last-child { border-bottom: none; }
+  .modal-btn-group { margin-top: 20px; text-align: right; }
 </style>
 </head>
 <body>
@@ -99,9 +149,56 @@
 </div>
 <div id="biasStatus">Waiting for first bias update...</div>
 
+<h3>Trade Execution (Manual Trigger - Real Orders)</h3>
+<div id="tradePanel">
+  <div class="security-warning">
+    WARNING: Your API key and secret are used directly in this browser page. Anyone with access to this browser
+    (via page source, dev tools, or this file) can see and misuse these credentials. Only use an API key restricted
+    to your own whitelisted IP, without withdrawal permission. Do not share this file with your credentials filled in.
+    Credentials are kept in memory only and are cleared on page reload.
+  </div>
+
+  <div class="form-row">
+    <label for="apiKeyInput">API Key:</label>
+    <input type="text" id="apiKeyInput" placeholder="Enter your Delta Exchange API key" autocomplete="off">
+  </div>
+  <div class="form-row">
+    <label for="apiSecretInput">API Secret:</label>
+    <input type="password" id="apiSecretInput" placeholder="Enter your Delta Exchange API secret" autocomplete="off">
+  </div>
+  <div class="form-row">
+    <label for="riskAmountInput">Risk Amount ($):</label>
+    <input type="number" id="riskAmountInput" placeholder="e.g. 1000" min="0">
+  </div>
+  <div class="form-row">
+    <button class="action-btn btn-secondary" id="checkBalanceBtn">Check Balance</button>
+  </div>
+  <div id="balanceStatus"></div>
+
+  <div class="form-row" style="margin-top: 20px;">
+    <button class="action-btn btn-long" id="goLongBtn">Go Long (Sell ATM PE + Buy ATM-200 PE)</button>
+    <button class="action-btn btn-short" id="goShortBtn">Go Short (Sell ATM CE + Buy ATM+200 CE)</button>
+  </div>
+  <div id="armStatus">Checking daily trade status...</div>
+
+  <div id="tradeLog"></div>
+</div>
+
+<div id="modalOverlay">
+  <div id="modalBox">
+    <h3 id="modalTitle">Confirm Trade</h3>
+    <div id="modalBody"></div>
+    <div class="modal-btn-group">
+      <button class="action-btn btn-secondary" id="modalCancelBtn">Cancel</button>
+      <button class="action-btn btn-long" id="modalConfirmBtn">Confirm & Place Order</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const BASE_URL = "https://api.india.delta.exchange/v2/tickers";
 const CANDLE_URL = "https://api.india.delta.exchange/v2/history/candles";
+const API_BASE = "https://api.india.delta.exchange";
 const UNDERLYING = "BTC";
 const STRIKE_GAP = 200;
 const REFRESH_INTERVAL_MS = 5000;
@@ -121,9 +218,14 @@ const ST_MULTIPLIER = 3;
 const CANDLE_FETCH_COUNT = 300; // warm-up bars for EMA/ATR convergence
 const INDICATOR_REFRESH_MS = 30000;
 
+// Trade execution settings
+const ONE_LOT_BTC = 0.001; // assumed contract value per lot for BTC options (verify against Delta contract specs)
+const LAST_TRADE_DATE_KEY = "btcTool_lastTradeDate";
+
 let currentMode = 'long'; // 'long' or 'short'
 let latestData = null;
 let alertActive = false; // tracks current alert state for edge-trigger sound
+let pendingTradeDirection = null; // 'long' or 'short' awaiting confirmation
 
 function parseExpiryFromSymbol(symbol) {
   const parts = symbol.split('-');
@@ -146,6 +248,23 @@ function findClosestStrike(strikes, spot) {
     }
   });
   return closest;
+}
+
+// Shared helper: compute legs (ATM + OTM) for a given mode, reused by table render and trade logic
+function computeLegsForMode(mode, data) {
+  const { strikeMap, atmStrike } = data;
+  const optionSide = mode === 'long' ? 'put' : 'call';
+  const otmStrike = mode === 'long' ? (atmStrike - STRIKE_GAP) : (atmStrike + STRIKE_GAP);
+  const otmLabel = mode === 'long' ? 'ATM - 200' : 'ATM + 200';
+  const sideLabel = mode === 'long' ? 'Put' : 'Call';
+
+  const atmEntry = strikeMap[atmStrike] ? strikeMap[atmStrike][optionSide] : null;
+  const otmEntry = strikeMap[otmStrike] ? strikeMap[otmStrike][optionSide] : null;
+
+  const atmMark = atmEntry ? parseFloat(atmEntry.mark_price) : null;
+  const otmMark = otmEntry ? parseFloat(otmEntry.mark_price) : null;
+
+  return { optionSide, otmStrike, otmLabel, sideLabel, atmEntry, otmEntry, atmMark, otmMark, atmStrike };
 }
 
 function setMode(mode) {
@@ -183,7 +302,7 @@ function playBeep() {
 }
 
 function renderTable(context) {
-  const { strikeMap, atmStrike, spotPrice, expiryDisplayStr, isZeroDTE } = context;
+  const { spotPrice, expiryDisplayStr, isZeroDTE, atmStrike } = context;
 
   document.getElementById('spotInfo').textContent =
     `Spot Price: ${Math.round(spotPrice)} | ATM Strike: ${Math.round(atmStrike)}`;
@@ -192,10 +311,10 @@ function renderTable(context) {
     ? `Showing 0DTE expiry: ${expiryDisplayStr}`
     : `No 0DTE expiry today. Showing nearest available expiry: ${expiryDisplayStr}`;
 
-  const optionSide = currentMode === 'long' ? 'put' : 'call';
-  const otmStrike = currentMode === 'long' ? (atmStrike - STRIKE_GAP) : (atmStrike + STRIKE_GAP);
-  const otmLabel = currentMode === 'long' ? 'ATM - 200' : 'ATM + 200';
-  const sideLabel = currentMode === 'long' ? 'Put' : 'Call';
+  const legs = computeLegsForMode(currentMode, context);
+  const { otmStrike, otmLabel, sideLabel, atmEntry, otmEntry, atmMark, otmMark } = legs;
+
+  const otmPctNumeric = (otmMark !== null && atmMark) ? (otmMark / atmMark) * 100 : null;
 
   document.getElementById('tableHead').innerHTML = `
     <tr>
@@ -206,13 +325,6 @@ function renderTable(context) {
       <th>% Premium vs ATM</th>
     </tr>
   `;
-
-  const atmEntry = strikeMap[atmStrike] ? strikeMap[atmStrike][optionSide] : null;
-  const otmEntry = strikeMap[otmStrike] ? strikeMap[otmStrike][optionSide] : null;
-
-  const atmMark = atmEntry ? parseFloat(atmEntry.mark_price) : null;
-  const otmMark = otmEntry ? parseFloat(otmEntry.mark_price) : null;
-  const otmPctNumeric = (otmMark !== null && atmMark) ? (otmMark / atmMark) * 100 : null;
 
   const rows = [
     { label: 'ATM', strike: atmStrike, entry: atmEntry, pct: atmEntry ? '100.0%' : 'N/A' },
@@ -546,11 +658,275 @@ async function fetchCandlesAndComputeBias() {
   }
 }
 
+// ---------- Trade Execution Logic ----------
+
+function logTrade(message) {
+  const logEl = document.getElementById('tradeLog');
+  const time = new Date().toLocaleTimeString();
+  logEl.textContent += `[${time}] ${message}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function getTodayDateStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
+function isTradingArmedToday() {
+  const lastDate = localStorage.getItem(LAST_TRADE_DATE_KEY);
+  return lastDate !== getTodayDateStr();
+}
+
+function updateArmStatusUI() {
+  const armed = isTradingArmedToday();
+  const goLongBtn = document.getElementById('goLongBtn');
+  const goShortBtn = document.getElementById('goShortBtn');
+  const armStatusEl = document.getElementById('armStatus');
+
+  if (armed) {
+    goLongBtn.disabled = false;
+    goShortBtn.disabled = false;
+    armStatusEl.textContent = 'Status: ARMED - one trade allowed today.';
+    armStatusEl.style.color = '#3fb950';
+  } else {
+    goLongBtn.disabled = true;
+    goShortBtn.disabled = true;
+    armStatusEl.textContent = 'Status: DISARMED - a trade was already placed today. Re-arms automatically tomorrow.';
+    armStatusEl.style.color = '#d29922';
+  }
+}
+
+function disarmForToday() {
+  localStorage.setItem(LAST_TRADE_DATE_KEY, getTodayDateStr());
+  updateArmStatusUI();
+}
+
+async function hmacSha256Hex(secret, message) {
+  const enc = new TextEncoder();
+  const keyData = enc.encode(secret);
+  const key = await crypto.subtle.importKey(
+    'raw', keyData, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+  );
+  const sigBuffer = await crypto.subtle.sign('HMAC', key, enc.encode(message));
+  const hashArray = Array.from(new Uint8Array(sigBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function signedRequest(method, path, queryString, bodyObj) {
+  const apiKey = document.getElementById('apiKeyInput').value.trim();
+  const apiSecret = document.getElementById('apiSecretInput').value.trim();
+
+  if (!apiKey || !apiSecret) {
+    throw new Error('API key and secret must be entered before making authenticated requests.');
+  }
+
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const payload = bodyObj ? JSON.stringify(bodyObj) : '';
+  const signatureData = method + timestamp + path + (queryString || '') + payload;
+  const signature = await hmacSha256Hex(apiSecret, signatureData);
+
+  const headers = {
+    'api-key': apiKey,
+    'timestamp': timestamp,
+    'signature': signature,
+    'Content-Type': 'application/json'
+  };
+
+  const url = API_BASE + path + (queryString || '');
+
+  const response = await fetch(url, {
+    method: method,
+    headers: headers,
+    body: bodyObj ? payload : undefined
+  });
+
+  const data = await response.json();
+  if (!response.ok || data.success === false) {
+    const errMsg = data.error ? JSON.stringify(data.error) : `HTTP ${response.status}`;
+    throw new Error(errMsg);
+  }
+  return data;
+}
+
+async function checkBalance() {
+  const balanceEl = document.getElementById('balanceStatus');
+  balanceEl.textContent = 'Fetching balance...';
+  try {
+    const data = await signedRequest('GET', '/v2/wallet/balances', '', null);
+    if (!data.result || data.result.length === 0) {
+      balanceEl.textContent = 'No balance data returned.';
+      return;
+    }
+    let text = 'Wallet Balances:\n';
+    data.result.forEach(item => {
+      const assetLabel = item.asset_symbol || item.asset || 'Unknown';
+      const balance = item.balance !== undefined ? item.balance : 'N/A';
+      const available = item.available_balance !== undefined ? item.available_balance : 'N/A';
+      text += `  ${assetLabel}: balance=${balance}, available=${available}\n`;
+    });
+    balanceEl.textContent = text;
+  } catch (err) {
+    balanceEl.textContent = `Error fetching balance: ${err.message}\n(This may indicate a CORS restriction, invalid credentials, or IP whitelisting issue.)`;
+  }
+}
+
+document.getElementById('checkBalanceBtn').addEventListener('click', checkBalance);
+
+function calculateTradePlan(direction) {
+  if (!latestData) {
+    return { error: 'No live option data available yet. Wait for the page to load option prices.' };
+  }
+
+  const legs = computeLegsForMode(direction, latestData);
+  const { sideLabel, atmEntry, otmEntry, atmMark, otmMark, otmLabel } = legs;
+
+  if (!atmEntry || !otmEntry || atmMark === null || otmMark === null) {
+    return { error: `Missing ${sideLabel} data for ATM or ${otmLabel} strike. Cannot calculate trade.` };
+  }
+
+  const riskAmountRaw = document.getElementById('riskAmountInput').value;
+  const riskAmount = parseFloat(riskAmountRaw);
+  if (!riskAmount || riskAmount <= 0) {
+    return { error: 'Enter a valid risk amount ($) greater than 0.' };
+  }
+
+  const netCreditPerBTC = atmMark - otmMark;
+  const maxRiskPerBTC = STRIKE_GAP - netCreditPerBTC;
+
+  if (maxRiskPerBTC <= 0) {
+    return { error: `Calculated max risk per BTC is ${maxRiskPerBTC.toFixed(2)} (zero or negative), which is not a valid credit spread scenario. Trade aborted.` };
+  }
+
+  const maxRiskPerLot = maxRiskPerBTC * ONE_LOT_BTC;
+  const lots = Math.floor(riskAmount / maxRiskPerLot);
+
+  if (lots < 1) {
+    return { error: `Risk amount ($${riskAmount}) is too low to open even 1 lot. Max risk per lot is $${maxRiskPerLot.toFixed(4)}.` };
+  }
+
+  return {
+    direction,
+    sideLabel,
+    sellEntry: atmEntry,
+    buyEntry: otmEntry,
+    sellLabel: 'ATM',
+    buyLabel: otmLabel,
+    atmMark,
+    otmMark,
+    netCreditPerBTC,
+    maxRiskPerBTC,
+    maxRiskPerLot,
+    riskAmount,
+    lots
+  };
+}
+
+function openConfirmationModal(direction) {
+  if (!isTradingArmedToday()) {
+    alert('Trading is disarmed for today. Only one trade per day is allowed.');
+    return;
+  }
+
+  const plan = calculateTradePlan(direction);
+  if (plan.error) {
+    alert(`Cannot proceed: ${plan.error}`);
+    return;
+  }
+
+  pendingTradeDirection = direction;
+
+  const modalTitle = document.getElementById('modalTitle');
+  const modalBody = document.getElementById('modalBody');
+
+  modalTitle.textContent = direction === 'long' ? 'Confirm: Go Long (Bull Put Credit Spread)' : 'Confirm: Go Short (Bear Call Credit Spread)';
+
+  modalBody.innerHTML = `
+    <div class="modal-row"><span>Sell Leg:</span><span>${plan.sellLabel} ${plan.sideLabel} @ ~${plan.atmMark.toFixed(2)} (symbol: ${plan.sellEntry.symbol})</span></div>
+    <div class="modal-row"><span>Buy Leg:</span><span>${plan.buyLabel} ${plan.sideLabel} @ ~${plan.otmMark.toFixed(2)} (symbol: ${plan.buyEntry.symbol})</span></div>
+    <div class="modal-row"><span>Net Credit per BTC:</span><span>$${plan.netCreditPerBTC.toFixed(2)}</span></div>
+    <div class="modal-row"><span>Max Risk per BTC:</span><span>$${plan.maxRiskPerBTC.toFixed(2)}</span></div>
+    <div class="modal-row"><span>Max Risk per Lot:</span><span>$${plan.maxRiskPerLot.toFixed(4)}</span></div>
+    <div class="modal-row"><span>Risk Amount Entered:</span><span>$${plan.riskAmount}</span></div>
+    <div class="modal-row"><span>Calculated Lots:</span><span>${plan.lots.toLocaleString()} lots (${(plan.lots * ONE_LOT_BTC).toFixed(3)} BTC notional)</span></div>
+    <div class="modal-row"><span>Order Type:</span><span>Market Order (both legs)</span></div>
+    <div class="modal-row" style="color:#d29922; font-size:12px;">
+      Note: Both legs are placed sequentially, not atomically. Actual fill prices may differ from displayed mark prices. If the second leg fails after the first succeeds, you will hold a naked position and must manage it manually.
+    </div>
+  `;
+
+  window._pendingPlan = plan;
+  document.getElementById('modalOverlay').style.display = 'flex';
+}
+
+function closeModal() {
+  document.getElementById('modalOverlay').style.display = 'none';
+  pendingTradeDirection = null;
+  window._pendingPlan = null;
+}
+
+document.getElementById('modalCancelBtn').addEventListener('click', closeModal);
+
+document.getElementById('modalConfirmBtn').addEventListener('click', async () => {
+  const plan = window._pendingPlan;
+  if (!plan) {
+    closeModal();
+    return;
+  }
+  document.getElementById('modalOverlay').style.display = 'none';
+  await executeSpread(plan);
+  window._pendingPlan = null;
+  pendingTradeDirection = null;
+});
+
+async function executeSpread(plan) {
+  logTrade(`Starting ${plan.direction.toUpperCase()} spread: Sell ${plan.sellLabel} ${plan.sideLabel}, Buy ${plan.buyLabel} ${plan.sideLabel}, Lots: ${plan.lots}`);
+
+  let sellOrderResult = null;
+  try {
+    const sellBody = {
+      product_id: plan.sellEntry.product_id,
+      size: plan.lots,
+      side: 'sell',
+      order_type: 'market_order'
+    };
+    logTrade(`Placing SELL leg: product_id=${plan.sellEntry.product_id}, size=${plan.lots}...`);
+    sellOrderResult = await signedRequest('POST', '/v2/orders', '', sellBody);
+    logTrade(`SELL leg placed successfully. Order ID: ${sellOrderResult.result.id}, State: ${sellOrderResult.result.state}`);
+  } catch (err) {
+    logTrade(`SELL leg FAILED: ${err.message}. No position opened. Trade aborted.`);
+    return;
+  }
+
+  try {
+    const buyBody = {
+      product_id: plan.buyEntry.product_id,
+      size: plan.lots,
+      side: 'buy',
+      order_type: 'market_order'
+    };
+    logTrade(`Placing BUY leg: product_id=${plan.buyEntry.product_id}, size=${plan.lots}...`);
+    const buyOrderResult = await signedRequest('POST', '/v2/orders', '', buyBody);
+    logTrade(`BUY leg placed successfully. Order ID: ${buyOrderResult.result.id}, State: ${buyOrderResult.result.state}`);
+    logTrade(`Spread execution complete. Disarming trading for today.`);
+    disarmForToday();
+  } catch (err) {
+    logTrade(`CRITICAL: BUY leg FAILED after SELL leg succeeded: ${err.message}`);
+    logTrade(`WARNING: You now hold a NAKED SHORT position (Sell leg order ID: ${sellOrderResult.result.id}). Go to Delta Exchange NOW and manually hedge or close this position.`);
+    alert('CRITICAL: The buy (hedge) leg failed after the sell leg succeeded. You hold a naked short position. Go to Delta Exchange immediately to manage this manually.');
+    disarmForToday();
+  }
+}
+
+document.getElementById('goLongBtn').addEventListener('click', () => openConfirmationModal('long'));
+document.getElementById('goShortBtn').addEventListener('click', () => openConfirmationModal('short'));
+
 fetchOptionChain();
 setInterval(fetchOptionChain, REFRESH_INTERVAL_MS);
 
 fetchCandlesAndComputeBias();
 setInterval(fetchCandlesAndComputeBias, INDICATOR_REFRESH_MS);
+
+updateArmStatusUI();
 </script>
 
 </body>
