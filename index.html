@@ -1,137 +1,535 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
+
 <head>
-  <meta charset="UTF-8">
-  <title>BTC Spot Price Capture</title>
+    <meta charset="UTF-8">
+    <title>BTC Option Signal Dashboard</title>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Segoe UI, Arial, sans-serif;
+        }
+
+        body {
+            background: #0f172a;
+            color: white;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            color: #38bdf8;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit,minmax(250px,1fr));
+            gap: 15px;
+        }
+
+        .card {
+            background: #1e293b;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 0 15px rgba(0,0,0,.4);
+        }
+
+        .card h3 {
+            margin-bottom: 10px;
+            color: #38bdf8;
+        }
+
+        .value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #f8fafc;
+        }
+
+        .capture-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit,minmax(200px,1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .capture {
+            background: #111827;
+            border-left: 5px solid #38bdf8;
+            padding: 15px;
+            border-radius: 10px;
+        }
+
+        .capture h4 {
+            color: #94a3b8;
+            margin-bottom: 5px;
+        }
+
+        .capture p {
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        .long {
+            color: #22c55e;
+        }
+
+        .short {
+            color: #ef4444;
+        }
+
+        .win {
+            color: #22c55e;
+        }
+
+        .loss {
+            color: #ef4444;
+        }
+
+        .strategy {
+            margin-top: 25px;
+            background: #111827;
+            border-radius: 15px;
+            padding: 20px;
+        }
+
+        .strategy table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .strategy td {
+            padding: 10px;
+            border-bottom: 1px solid #334155;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 25px;
+            color: #94a3b8;
+        }
+    </style>
 </head>
+
 <body>
-  <h2>Live BTC Spot Price (IST)</h2>
-  <p>Current IST Time: <span id="istTime">--</span></p>
-  <p>Current Spot Price: <span id="livePrice">--</span></p>
 
-  <h3>Captured Values (Today)</h3>
-  <ul>
-    <li>Close @ 09:00 IST: <span id="close0900">Not captured</span></li>
-    <li>Close @ 13:30 IST: <span id="close1330">Not captured</span></li>
-    <li>Open @ 14:00 IST: <span id="open1400">Not captured</span></li>
-    <li>Close @ 17:00 IST: <span id="close1700">Not captured</span></li>
-  </ul>
+    <div class="header">
+        <h1>BTC Option Signal Dashboard</h1>
+        <p>Delta Exchange Spot Price Strategy</p>
+    </div>
 
-  <script>
-    const TICKER_URL = "https://api.india.delta.exchange/v2/tickers/BTCUSD";
+    <div class="grid">
 
-    // Target capture times in IST (24-hour format)
-    const TARGETS = [
-      { key: "close0900", hh: 9,  mm: 0,  ss: 0 },
-      { key: "close1330", hh: 13, mm: 30, ss: 0 },
-      { key: "open1400",  hh: 14, mm: 0,  ss: 0 },
-      { key: "close1700", hh: 17, mm: 0,  ss: 0 }
-    ];
+        <div class="card">
+            <h3>IST Time</h3>
+            <div class="value" id="istTime">--</div>
+        </div>
 
-    // Stores captured prices and flags to avoid duplicate capture same day
-    let capturedValues = {};
-    let capturedFlags = {};
-    let lastResetDateStr = null;
+        <div class="card">
+            <h3>Live Spot Price</h3>
+            <div class="value" id="livePrice">--</div>
+        </div>
 
-    function getISTParts() {
-      // Get current time broken into IST components using Intl API
-      const now = new Date();
-      const formatter = new Intl.DateTimeFormat("en-GB", {
-        timeZone: "Asia/Kolkata",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false
-      });
-      const parts = formatter.formatToParts(now);
-      const map = {};
-      parts.forEach(p => { if (p.type !== "literal") map[p.type] = p.value; });
-      return {
-        dateStr: `${map.year}-${map.month}-${map.day}`,
-        hh: parseInt(map.hour, 10),
-        mm: parseInt(map.minute, 10),
-        ss: parseInt(map.second, 10)
-      };
-    }
+        <div class="card">
+            <h3>Signal</h3>
+            <div class="value" id="signalDisplay">WAITING</div>
+        </div>
 
-    function resetIfNewDay(dateStr) {
-      if (lastResetDateStr !== dateStr) {
-        lastResetDateStr = dateStr;
-        capturedValues = {};
-        capturedFlags = {};
-        TARGETS.forEach(t => {
-          capturedFlags[t.key] = false;
-          document.getElementById(t.key).textContent = "Not captured";
+        <div class="card">
+            <h3>Result</h3>
+            <div class="value" id="resultDisplay">PENDING</div>
+        </div>
+
+    </div>
+
+    <div class="capture-grid">
+
+        <div class="capture">
+            <h4>Close @ 09:00</h4>
+            <p id="close0900">Not Captured</p>
+        </div>
+
+        <div class="capture">
+            <h4>Close @ 13:30</h4>
+            <p id="close1330">Not Captured</p>
+        </div>
+
+        <div class="capture">
+            <h4>Open @ 14:00</h4>
+            <p id="open1400">Not Captured</p>
+        </div>
+
+        <div class="capture">
+            <h4>Close @ 17:00</h4>
+            <p id="close1700">Not Captured</p>
+        </div>
+
+    </div>
+
+    <div class="strategy">
+
+        <h2 style="margin-bottom:15px;color:#38bdf8;">
+            Strategy Details
+        </h2>
+
+        <table>
+
+            <tr>
+                <td>D</td>
+                <td id="DValue">--</td>
+            </tr>
+
+            <tr>
+                <td>ATM Strike</td>
+                <td id="atmStrike">--</td>
+            </tr>
+
+            <tr>
+                <td>Option Type</td>
+                <td id="optionType">--</td>
+            </tr>
+
+            <tr>
+                <td>Sold Strike</td>
+                <td id="soldStrike">--</td>
+            </tr>
+
+            <tr>
+                <td>Status</td>
+                <td id="tradeStatus">Waiting...</td>
+            </tr>
+
+        </table>
+
+    </div>
+
+    <div class="footer">
+        BTC Spot Strategy Dashboard
+    </div>
+
+<script>
+
+const TICKER_URL =
+"https://api.india.delta.exchange/v2/tickers/BTCUSD";
+
+const TARGETS = [
+    { key:"close0900", hh:9, mm:0, ss:0 },
+    { key:"close1330", hh:13, mm:30, ss:0 },
+    { key:"open1400", hh:14, mm:0, ss:0 },
+    { key:"close1700", hh:17, mm:0, ss:0 }
+];
+
+let capturedValues = {};
+let capturedFlags = {};
+let lastResetDateStr = null;
+
+function getISTParts() {
+
+    const now = new Date();
+
+    const formatter = new Intl.DateTimeFormat(
+        "en-GB",
+        {
+            timeZone:"Asia/Kolkata",
+            year:"numeric",
+            month:"2-digit",
+            day:"2-digit",
+            hour:"2-digit",
+            minute:"2-digit",
+            second:"2-digit",
+            hour12:false
+        }
+    );
+
+    const parts = formatter.formatToParts(now);
+
+    const map = {};
+
+    parts.forEach(p=>{
+        if(p.type!=="literal"){
+            map[p.type]=p.value;
+        }
+    });
+
+    return {
+        dateStr:`${map.year}-${map.month}-${map.day}`,
+        hh:Number(map.hour),
+        mm:Number(map.minute),
+        ss:Number(map.second)
+    };
+}
+
+function resetIfNewDay(dateStr){
+
+    if(lastResetDateStr!==dateStr){
+
+        lastResetDateStr=dateStr;
+
+        capturedValues={};
+        capturedFlags={};
+
+        TARGETS.forEach(t=>{
+
+            capturedFlags[t.key]=false;
+
+            document.getElementById(t.key)
+            .textContent="Not Captured";
         });
-        console.log("New IST day detected. Capture flags reset for:", dateStr);
-      }
-    }
 
-    async function fetchSpotPrice() {
-      try {
+        document.getElementById("signalDisplay")
+        .textContent="WAITING";
+
+        document.getElementById("resultDisplay")
+        .textContent="PENDING";
+
+        clearStrategy();
+    }
+}
+
+function clearStrategy(){
+
+    document.getElementById("DValue").innerText="--";
+    document.getElementById("atmStrike").innerText="--";
+    document.getElementById("optionType").innerText="--";
+    document.getElementById("soldStrike").innerText="--";
+    document.getElementById("tradeStatus").innerText="Waiting...";
+}
+
+async function fetchSpotPrice(){
+
+    try{
+
         const response = await fetch(TICKER_URL);
-        if (!response.ok) {
-          throw new Error(`HTTP error: ${response.status}`);
-        }
         const data = await response.json();
-        if (!data.success || !data.result || !data.result.spot_price) {
-          throw new Error("Unexpected response structure");
-        }
-        return parseFloat(data.result.spot_price);
-      } catch (err) {
-        console.error("Error fetching spot price:", err);
+
+        return Number(data.result.spot_price);
+
+    }catch(err){
+
+        console.error(err);
         return null;
-      }
+    }
+}
+
+function getATM(price){
+
+    return Math.round(price/200)*200;
+}
+
+function computeSignal(){
+
+    const c0900 = capturedValues.close0900;
+    const c1330 = capturedValues.close1330;
+
+    if(c0900===undefined || c1330===undefined){
+        return null;
     }
 
-    function checkAndCapture(istParts, price) {
-      TARGETS.forEach(t => {
-        if (
-          !capturedFlags[t.key] &&
-          istParts.hh === t.hh &&
-          istParts.mm === t.mm &&
-          istParts.ss === t.ss
-        ) {
-          capturedValues[t.key] = price;
-          capturedFlags[t.key] = true;
-          document.getElementById(t.key).textContent = price;
-          console.log(`Captured ${t.key} = ${price} at ${istParts.dateStr} ${t.hh}:${t.mm}:${t.ss} IST`);
+    const D = c1330 - c0900;
+
+    let signal = "NO TRADE";
+
+    if(D>0 && D<500){
+        signal="LONG";
+    }
+    else if(D>=500){
+        signal="SHORT";
+    }
+    else if(D<0 && D>-500){
+        signal="SHORT";
+    }
+    else if(D<=-500){
+        signal="LONG";
+    }
+
+    return {D,signal};
+}
+
+function buildTrade(){
+
+    const signalData = computeSignal();
+
+    if(!signalData) return;
+
+    if(capturedValues.open1400===undefined){
+        return;
+    }
+
+    const atm =
+    getATM(capturedValues.open1400);
+
+    let strike;
+    let optionType;
+
+    if(signalData.signal==="LONG"){
+
+        strike = atm - 200;
+        optionType="PE";
+    }
+    else{
+
+        strike = atm + 200;
+        optionType="CE";
+    }
+
+    document.getElementById("signalDisplay")
+    .innerHTML =
+    `<span class="${signalData.signal.toLowerCase()}">${signalData.signal}</span>`;
+
+    document.getElementById("DValue")
+    .innerText = signalData.D.toFixed(2);
+
+    document.getElementById("atmStrike")
+    .innerText = atm;
+
+    document.getElementById("optionType")
+    .innerText = optionType;
+
+    document.getElementById("soldStrike")
+    .innerText = strike;
+
+    document.getElementById("tradeStatus")
+    .innerText =
+    `SELL ${strike} ${optionType}`;
+
+    return {
+        signal:signalData.signal,
+        D:signalData.D,
+        atm,
+        strike,
+        optionType
+    };
+}
+
+function evaluateTrade(){
+
+    const trade = buildTrade();
+
+    if(!trade) return;
+
+    if(capturedValues.close1700===undefined){
+        return;
+    }
+
+    const close1700 =
+    capturedValues.close1700;
+
+    let result="LOSS";
+
+    if(
+        trade.signal==="LONG" &&
+        close1700 > trade.strike
+    ){
+        result="WIN";
+    }
+
+    if(
+        trade.signal==="SHORT" &&
+        close1700 < trade.strike
+    ){
+        result="WIN";
+    }
+
+    document.getElementById("resultDisplay")
+    .innerHTML =
+    `<span class="${result==='WIN'?'win':'loss'}">${result}</span>`;
+
+    document.getElementById("tradeStatus")
+    .innerText =
+    `${result} | Close(17:00) = ${close1700}`;
+}
+
+function checkAndCapture(istParts,price){
+
+    TARGETS.forEach(t=>{
+
+        if(
+            !capturedFlags[t.key] &&
+            istParts.hh===t.hh &&
+            istParts.mm===t.mm &&
+            istParts.ss===t.ss
+        ){
+
+            capturedValues[t.key]=price;
+
+            capturedFlags[t.key]=true;
+
+            document.getElementById(t.key)
+            .textContent=price;
+
+            console.log("Captured",t.key,price);
+
+            if(
+                t.key==="open1400"
+            ){
+                buildTrade();
+            }
+
+            if(
+                t.key==="close1700"
+            ){
+                evaluateTrade();
+            }
         }
-      });
+    });
+}
+
+async function pollTick(){
+
+    const ist = getISTParts();
+
+    resetIfNewDay(
+        ist.dateStr
+    );
+
+    document.getElementById("istTime")
+    .textContent =
+    `${ist.dateStr} ${String(ist.hh).padStart(2,'0')}:${String(ist.mm).padStart(2,'0')}:${String(ist.ss).padStart(2,'0')}`;
+
+    const price =
+    await fetchSpotPrice();
+
+    if(price!==null){
+
+        document.getElementById("livePrice")
+        .textContent = price;
+
+        checkAndCapture(
+            ist,
+            price
+        );
     }
+}
 
-    async function pollTick() {
-      const istParts = getISTParts();
-      resetIfNewDay(istParts.dateStr);
+function startAlignedPolling(){
 
-      document.getElementById("istTime").textContent =
-        `${istParts.dateStr} ${String(istParts.hh).padStart(2,'0')}:${String(istParts.mm).padStart(2,'0')}:${String(istParts.ss).padStart(2,'0')}`;
+    const now = new Date();
 
-      const price = await fetchSpotPrice();
-      if (price !== null) {
-        document.getElementById("livePrice").textContent = price;
-        checkAndCapture(istParts, price);
-      }
-    }
+    const delay =
+    5000 - (now.getTime()%5000);
 
-    function scheduleAlignedPolling() {
-      const now = new Date();
-      const msIntoSecondCycle = now.getTime() % 5000;
-      const delayToNextBoundary = 5000 - msIntoSecondCycle;
+    setTimeout(()=>{
 
-      // Wait until next 5-second wall-clock boundary, then poll every 5s
-      setTimeout(() => {
         pollTick();
-        setInterval(pollTick, 5000);
-      }, delayToNextBoundary);
-    }
 
-    // Initial immediate poll, then start aligned interval
-    pollTick();
-    scheduleAlignedPolling();
-  </script>
+        setInterval(
+            pollTick,
+            5000
+        );
+
+    },delay);
+}
+
+pollTick();
+startAlignedPolling();
+
+</script>
+
 </body>
 </html>
