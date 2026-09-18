@@ -1,533 +1,431 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-    <meta charset="UTF-8">
-    <title> Dashboard</title>
-
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: Segoe UI, Arial, sans-serif;
-        }
-
-        body {
-            background: #0f172a;
-            color: white;
-            padding: 20px;
-        }
-
-        .header {
-            text-align: center;
-            margin-bottom: 20px;
-        }
-
-        .header h1 {
-            color: #38bdf8;
-        }
-
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit,minmax(250px,1fr));
-            gap: 15px;
-        }
-
-        .card {
-            background: #1e293b;
-            border-radius: 15px;
-            padding: 20px;
-            box-shadow: 0 0 15px rgba(0,0,0,.4);
-        }
-
-        .card h3 {
-            margin-bottom: 10px;
-            color: #38bdf8;
-        }
-
-        .value {
-            font-size: 24px;
-            font-weight: bold;
-            color: #f8fafc;
-        }
-
-        .capture-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit,minmax(200px,1fr));
-            gap: 15px;
-            margin-top: 20px;
-        }
-
-        .capture {
-            background: #111827;
-            border-left: 5px solid #38bdf8;
-            padding: 15px;
-            border-radius: 10px;
-        }
-
-        .capture h4 {
-            color: #94a3b8;
-            margin-bottom: 5px;
-        }
-
-        .capture p {
-            font-size: 20px;
-            font-weight: bold;
-        }
-
-        .long {
-            color: #22c55e;
-        }
-
-        .short {
-            color: #ef4444;
-        }
-
-        .win {
-            color: #22c55e;
-        }
-
-        .loss {
-            color: #ef4444;
-        }
-
-        .strategy {
-            margin-top: 25px;
-            background: #111827;
-            border-radius: 15px;
-            padding: 20px;
-        }
-
-        .strategy table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        .strategy td {
-            padding: 10px;
-            border-bottom: 1px solid #334155;
-        }
-
-        .footer {
-            text-align: center;
-            margin-top: 25px;
-            color: #94a3b8;
-        }
-    </style>
+<meta charset="UTF-8">
+<title>Monitor</title>
+<style>
+  body { font-family: Arial, sans-serif; background: #0d1117; color: #e6edf3; padding: 20px; }
+  h2 { color: #58a6ff; }
+  .toggle-group { margin: 15px 0; }
+  .toggle-btn {
+    padding: 10px 25px; margin-right: 10px; border: 1px solid #30363d;
+    background: #161b22; color: #e6edf3; cursor: pointer; font-size: 15px; border-radius: 6px;
+  }
+  .toggle-btn.active-long { background: #238636; border-color: #238636; }
+  .toggle-btn.active-short { background: #da3633; border-color: #da3633; }
+  table { border-collapse: collapse; width: 100%; margin-top: 15px; }
+  th, td { border: 1px solid #30363d; padding: 12px; text-align: center; }
+  th { background: #161b22; }
+  tr:nth-child(even) { background: #161b22; }
+  #status { margin-top: 10px; font-size: 13px; color: #8b949e; }
+  #error { color: #f85149; font-weight: bold; }
+  #expiryInfo { margin-top: 5px; font-size: 14px; color: #d29922; }
+  #spotInfo { font-size: 15px; }
+  #alertBanner {
+    display: none;
+    margin-top: 15px;
+    padding: 15px;
+    background: #da3633;
+    color: #ffffff;
+    font-weight: bold;
+    font-size: 16px;
+    border-radius: 6px;
+    animation: flash 1s infinite;
+  }
+  @keyframes flash {
+    0% { opacity: 1; }
+    50% { opacity: 0.4; }
+    100% { opacity: 1; }
+  }
+</style>
 </head>
-
 <body>
 
-    <div class="header">
-        <h1>BTC Option Signal Dashboard</h1>
-        <p>Delta Exchange Spot Price Strategy</p>
-    </div>
+<h2>BTC Option Premium Monitor</h2>
 
-    <div class="grid">
+<div class="toggle-group">
+  <button id="longBtn" class="toggle-btn active-long">Long (Sell Put)</button>
+  <button id="shortBtn" class="toggle-btn">Short (Sell Call)</button>
+</div>
 
-        <div class="card">
-            <h3>IST Time</h3>
-            <div class="value" id="istTime">--</div>
-        </div>
+<div id="error"></div>
+<div id="spotInfo"></div>
+<div id="expiryInfo"></div>
+<div id="alertBanner"></div>
 
-        <div class="card">
-            <h3>Live Spot Price</h3>
-            <div class="value" id="livePrice">--</div>
-        </div>
+<table id="optionTable">
+  <thead id="tableHead"></thead>
+  <tbody id="tableBody"></tbody>
+</table>
 
-        <div class="card">
-            <h3>Signal</h3>
-            <div class="value" id="signalDisplay">WAITING</div>
-        </div>
-
-        <div class="card">
-            <h3>Result</h3>
-            <div class="value" id="resultDisplay">PENDING</div>
-        </div>
-
-    </div>
-
-    <div class="capture-grid">
-
-        <div class="capture">
-            <h4>Close @ 09:00</h4>
-            <p id="close0900">Not Captured</p>
-        </div>
-
-        <div class="capture">
-            <h4>Close @ 13:30</h4>
-            <p id="close1330">Not Captured</p>
-        </div>
-
-        <div class="capture">
-            <h4>Open @ 14:00</h4>
-            <p id="open1400">Not Captured</p>
-        </div>
-
-        <div class="capture">
-            <h4>Close @ 17:00</h4>
-            <p id="close1700">Not Captured</p>
-        </div>
-
-    </div>
-
-    <div class="strategy">
-
-        <h2 style="margin-bottom:15px;color:#38bdf8;">
-            Strategy Details
-        </h2>
-
-        <table>
-
-            <tr>
-                <td>D</td>
-                <td id="DValue">--</td>
-            </tr>
-
-            <tr>
-                <td>ATM Strike</td>
-                <td id="atmStrike">--</td>
-            </tr>
-
-            <tr>
-                <td>Option Type</td>
-                <td id="optionType">--</td>
-            </tr>
-
-            <tr>
-                <td>Sold Strike</td>
-                <td id="soldStrike">--</td>
-            </tr>
-
-            <tr>
-                <td>Status</td>
-                <td id="tradeStatus">Waiting...</td>
-            </tr>
-
-        </table>
-
-    </div>
-
-    <div class="footer">
-        BTC Spot Strategy Dashboard
-    </div>
+<div id="status">Waiting for first update...</div>
 
 <script>
+const BASE_URL = "https://api.india.delta.exchange/v2/tickers";
+const UNDERLYING = "BTC";
+const STRIKE_GAP = 200;
+const REFRESH_INTERVAL_MS = 5000;
 
-const TICKER_URL =
-"https://api.india.delta.exchange/v2/tickers/BTCUSD";
+const ATM_MIN = 100;
+const ATM_MAX = 150;
+const OTM_PCT_MAX = 50;
 
-const TARGETS = [
-    { key:"close0900", hh:9, mm:0, ss:0 },
-    { key:"close1330", hh:13, mm:30, ss:0 },
-    { key:"open1400", hh:14, mm:0, ss:0 },
-    { key:"close1700", hh:17, mm:0, ss:0 }
-];
+let currentMode = 'long';
+let latestData = null;
+let alertActive = false;
 
-let capturedValues = {};
-let capturedFlags = {};
-let lastResetDateStr = null;
+function parseExpiryFromSymbol(symbol) {
+  const parts = symbol.split('-');
+  const dateStr = parts[parts.length - 1];
+  if (dateStr.length !== 6) return null;
 
-function getISTParts() {
+  const dd = parseInt(dateStr.substring(0, 2), 10);
+  const mm = parseInt(dateStr.substring(2, 4), 10) - 1;
+  const yy = parseInt(dateStr.substring(4, 6), 10) + 2000;
 
-    const now = new Date();
+  return new Date(yy, mm, dd);
+}
 
-    const formatter = new Intl.DateTimeFormat(
-        "en-GB",
-        {
-            timeZone:"Asia/Kolkata",
-            year:"numeric",
-            month:"2-digit",
-            day:"2-digit",
-            hour:"2-digit",
-            minute:"2-digit",
-            second:"2-digit",
-            hour12:false
-        }
-    );
+function findClosestStrike(strikes, spot) {
+  let closest = null;
+  let minDiff = Infinity;
 
-    const parts = formatter.formatToParts(now);
+  strikes.forEach(s => {
+    const diff = Math.abs(s - spot);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closest = s;
+    }
+  });
 
-    const map = {};
+  return closest;
+}
 
-    parts.forEach(p=>{
-        if(p.type!=="literal"){
-            map[p.type]=p.value;
-        }
+function setMode(mode) {
+  currentMode = mode;
+
+  document.getElementById('longBtn').classList.toggle(
+    'active-long',
+    mode === 'long'
+  );
+
+  document.getElementById('shortBtn').classList.toggle(
+    'active-short',
+    mode === 'short'
+  );
+
+  alertActive = false;
+  document.getElementById('alertBanner').style.display = 'none';
+
+  if (latestData) {
+    renderTable(latestData);
+  }
+}
+
+document.getElementById('longBtn')
+  .addEventListener('click', () => setMode('long'));
+
+document.getElementById('shortBtn')
+  .addEventListener('click', () => setMode('short'));
+
+function playBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+    const oscillator = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    oscillator.type = 'sine';
+    oscillator.frequency.value = 880;
+    gainNode.gain.value = 0.3;
+
+    oscillator.start();
+
+    setTimeout(() => {
+      oscillator.stop();
+      ctx.close();
+    }, 400);
+
+  } catch (e) {
+    console.warn('Audio playback failed:', e);
+  }
+}
+
+function renderTable(context) {
+
+  const {
+    strikeMap,
+    atmStrike,
+    spotPrice,
+    expiryDisplayStr,
+    isZeroDTE
+  } = context;
+
+  document.getElementById('spotInfo').textContent =
+    `Spot Price: ${Math.round(spotPrice)} | ATM Strike: ${atmStrike}`;
+
+  document.getElementById('expiryInfo').textContent =
+    isZeroDTE
+      ? `Showing 0DTE expiry: ${expiryDisplayStr}`
+      : `No 0DTE expiry today. Showing nearest available expiry: ${expiryDisplayStr}`;
+
+  const optionSide = currentMode === 'long' ? 'put' : 'call';
+  const otmStrike = currentMode === 'long'
+    ? (atmStrike - STRIKE_GAP)
+    : (atmStrike + STRIKE_GAP);
+
+  const otmLabel = currentMode === 'long'
+    ? 'ATM - 200'
+    : 'ATM + 200';
+
+  const sideLabel = currentMode === 'long'
+    ? 'Put'
+    : 'Call';
+
+  document.getElementById('tableHead').innerHTML = `
+    <tr>
+      <th>Strike Type</th>
+      <th>Strike Price</th>
+      <th>${sideLabel} Mark Price</th>
+      <th>${sideLabel} LTP</th>
+      <th>% Premium vs ATM</th>
+    </tr>
+  `;
+
+  const atmEntry = strikeMap[atmStrike]
+    ? strikeMap[atmStrike][optionSide]
+    : null;
+
+  const otmEntry = strikeMap[otmStrike]
+    ? strikeMap[otmStrike][optionSide]
+    : null;
+
+  const atmMark = atmEntry
+    ? parseFloat(atmEntry.mark_price)
+    : null;
+
+  const otmMark = otmEntry
+    ? parseFloat(otmEntry.mark_price)
+    : null;
+
+  const otmPctNumeric =
+    (otmMark !== null && atmMark)
+      ? (otmMark / atmMark) * 100
+      : null;
+
+  const rows = [
+    {
+      label: 'ATM',
+      strike: atmStrike,
+      entry: atmEntry,
+      pct: atmEntry ? '100%' : 'N/A'
+    },
+    {
+      label: otmLabel,
+      strike: otmStrike,
+      entry: otmEntry,
+      pct: otmPctNumeric !== null
+        ? Math.round(otmPctNumeric) + '%'
+        : 'N/A'
+    }
+  ];
+
+  let html = '';
+
+  rows.forEach(row => {
+
+    const mark = row.entry
+      ? Math.round(parseFloat(row.entry.mark_price))
+      : 'N/A';
+
+    const ltp = row.entry
+      ? Math.round(parseFloat(row.entry.close))
+      : 'N/A';
+
+    html += `
+      <tr>
+        <td>${row.label}</td>
+        <td>${row.strike}</td>
+        <td>${mark}</td>
+        <td>${ltp}</td>
+        <td>${row.pct}</td>
+      </tr>
+    `;
+  });
+
+  document.getElementById('tableBody').innerHTML = html;
+
+  document.getElementById('status').textContent =
+    `Last updated: ${new Date().toLocaleTimeString()}`;
+
+  const conditionMet =
+    atmMark !== null &&
+    atmMark > ATM_MIN &&
+    atmMark < ATM_MAX &&
+    otmPctNumeric !== null &&
+    otmPctNumeric < OTM_PCT_MAX;
+
+  const banner = document.getElementById('alertBanner');
+
+  if (conditionMet) {
+
+    banner.style.display = 'block';
+
+    banner.textContent =
+      `ALERT: ATM ${sideLabel} Mark Price (${Math.round(atmMark)}) is between ${ATM_MIN}-${ATM_MAX}, ` +
+      `and ${otmLabel} ${sideLabel} premium is ${Math.round(otmPctNumeric)}% of ATM (below ${OTM_PCT_MAX}%).`;
+
+    if (!alertActive) {
+      playBeep();
+      alertActive = true;
+    }
+
+  } else {
+    banner.style.display = 'none';
+    alertActive = false;
+  }
+}
+
+async function fetchOptionChain() {
+
+  const url =
+    `${BASE_URL}?contract_types=call_options,put_options&underlying_asset_symbols=${UNDERLYING}`;
+
+  try {
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(`HTTP error: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (!data.success || !data.result || data.result.length === 0) {
+
+      document.getElementById('error').textContent =
+        'No live BTC option data found.';
+
+      document.getElementById('tableBody').innerHTML = '';
+      document.getElementById('tableHead').innerHTML = '';
+      document.getElementById('spotInfo').textContent = '';
+      document.getElementById('expiryInfo').textContent = '';
+
+      return;
+    }
+
+    document.getElementById('error').textContent = '';
+
+    const tickers = data.result;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const expiryGroups = {};
+
+    tickers.forEach(t => {
+
+      const expiryDate = parseExpiryFromSymbol(t.symbol);
+
+      if (!expiryDate) return;
+
+      const key = expiryDate.getTime();
+
+      if (!expiryGroups[key]) {
+        expiryGroups[key] = [];
+      }
+
+      expiryGroups[key].push(t);
     });
 
-    return {
-        dateStr:`${map.year}-${map.month}-${map.day}`,
-        hh:Number(map.hour),
-        mm:Number(map.minute),
-        ss:Number(map.second)
-    };
-}
+    const expiryKeys =
+      Object.keys(expiryGroups)
+      .map(Number)
+      .sort((a, b) => a - b);
 
-function resetIfNewDay(dateStr){
+    let chosenExpiryKey = null;
 
-    if(lastResetDateStr!==dateStr){
-
-        lastResetDateStr=dateStr;
-
-        capturedValues={};
-        capturedFlags={};
-
-        TARGETS.forEach(t=>{
-
-            capturedFlags[t.key]=false;
-
-            document.getElementById(t.key)
-            .textContent="Not Captured";
-        });
-
-        document.getElementById("signalDisplay")
-        .textContent="WAITING";
-
-        document.getElementById("resultDisplay")
-        .textContent="PENDING";
-
-        clearStrategy();
-    }
-}
-
-function clearStrategy(){
-
-    document.getElementById("DValue").innerText="--";
-    document.getElementById("atmStrike").innerText="--";
-    document.getElementById("optionType").innerText="--";
-    document.getElementById("soldStrike").innerText="--";
-    document.getElementById("tradeStatus").innerText="Waiting...";
-}
-
-async function fetchSpotPrice(){
-
-    try{
-
-        const response = await fetch(TICKER_URL);
-        const data = await response.json();
-
-        return Number(data.result.spot_price);
-
-    }catch(err){
-
-        console.error(err);
-        return null;
-    }
-}
-
-function getATM(price){
-
-    return Math.round(price/200)*200;
-}
-
-function computeSignal(){
-
-    const c0900 = capturedValues.close0900;
-    const c1330 = capturedValues.close1330;
-
-    if(c0900===undefined || c1330===undefined){
-        return null;
+    for (const key of expiryKeys) {
+      if (key >= today.getTime()) {
+        chosenExpiryKey = key;
+        break;
+      }
     }
 
-    const D = c1330 - c0900;
-
-    let signal = "NO TRADE";
-
-    if(D>0 && D<500){
-        signal="LONG";
-    }
-    else if(D>=500){
-        signal="SHORT";
-    }
-    else if(D<0 && D>-500){
-        signal="SHORT";
-    }
-    else if(D<=-500){
-        signal="LONG";
+    if (chosenExpiryKey === null && expiryKeys.length > 0) {
+      chosenExpiryKey = expiryKeys[expiryKeys.length - 1];
     }
 
-    return {D,signal};
-}
-
-function buildTrade(){
-
-    const signalData = computeSignal();
-
-    if(!signalData) return;
-
-    if(capturedValues.open1400===undefined){
-        return;
+    if (chosenExpiryKey === null) {
+      document.getElementById('error').textContent =
+        'Could not determine any valid expiry.';
+      return;
     }
 
-    const atm =
-    getATM(capturedValues.open1400);
+    const chosenExpiryDate = new Date(chosenExpiryKey);
 
-    let strike;
-    let optionType;
+    const isZeroDTE =
+      chosenExpiryDate.getTime() === today.getTime();
 
-    if(signalData.signal==="LONG"){
+    const expiryDisplayStr =
+      chosenExpiryDate.toLocaleDateString('en-GB');
 
-        strike = atm - 200;
-        optionType="PE";
-    }
-    else{
+    const relevantTickers =
+      expiryGroups[chosenExpiryKey];
 
-        strike = atm + 200;
-        optionType="CE";
-    }
+    const spotPrice =
+      parseFloat(relevantTickers[0].spot_price);
 
-    document.getElementById("signalDisplay")
-    .innerHTML =
-    `<span class="${signalData.signal.toLowerCase()}">${signalData.signal}</span>`;
+    const strikeMap = {};
+    const strikeSet = new Set();
 
-    document.getElementById("DValue")
-    .innerText = signalData.D.toFixed(2);
+    relevantTickers.forEach(t => {
 
-    document.getElementById("atmStrike")
-    .innerText = atm;
+      const strike =
+        parseFloat(t.strike_price);
 
-    document.getElementById("optionType")
-    .innerText = optionType;
+      strikeSet.add(strike);
 
-    document.getElementById("soldStrike")
-    .innerText = strike;
+      if (!strikeMap[strike]) {
+        strikeMap[strike] = {};
+      }
 
-    document.getElementById("tradeStatus")
-    .innerText =
-    `SELL ${strike} ${optionType}`;
+      if (t.contract_type === 'call_options') {
+        strikeMap[strike].call = t;
+      }
 
-    return {
-        signal:signalData.signal,
-        D:signalData.D,
-        atm,
-        strike,
-        optionType
-    };
-}
-
-function evaluateTrade(){
-
-    const trade = buildTrade();
-
-    if(!trade) return;
-
-    if(capturedValues.close1700===undefined){
-        return;
-    }
-
-    const close1700 =
-    capturedValues.close1700;
-
-    let result="LOSS";
-
-    if(
-        trade.signal==="LONG" &&
-        close1700 > trade.strike
-    ){
-        result="WIN";
-    }
-
-    if(
-        trade.signal==="SHORT" &&
-        close1700 < trade.strike
-    ){
-        result="WIN";
-    }
-
-    document.getElementById("resultDisplay")
-    .innerHTML =
-    `<span class="${result==='WIN'?'win':'loss'}">${result}</span>`;
-
-    document.getElementById("tradeStatus")
-    .innerText =
-    `${result} | Close(17:00) = ${close1700}`;
-}
-
-function checkAndCapture(istParts,price){
-
-    TARGETS.forEach(t=>{
-
-        if(
-            !capturedFlags[t.key] &&
-            istParts.hh===t.hh &&
-            istParts.mm===t.mm &&
-            istParts.ss===t.ss
-        ){
-
-            capturedValues[t.key]=price;
-
-            capturedFlags[t.key]=true;
-
-            document.getElementById(t.key)
-            .textContent=price;
-
-            console.log("Captured",t.key,price);
-
-            if(
-                t.key==="open1400"
-            ){
-                buildTrade();
-            }
-
-            if(
-                t.key==="close1700"
-            ){
-                evaluateTrade();
-            }
-        }
+      if (t.contract_type === 'put_options') {
+        strikeMap[strike].put = t;
+      }
     });
+
+    const strikesArray = Array.from(strikeSet);
+
+    const atmStrike =
+      findClosestStrike(strikesArray, spotPrice);
+
+    latestData = {
+      strikeMap,
+      atmStrike,
+      spotPrice,
+      expiryDisplayStr,
+      isZeroDTE
+    };
+
+    renderTable(latestData);
+
+  } catch (err) {
+
+    document.getElementById('error').textContent =
+      `Error fetching data: ${err.message}`;
+  }
 }
 
-async function pollTick(){
-
-    const ist = getISTParts();
-
-    resetIfNewDay(
-        ist.dateStr
-    );
-
-    document.getElementById("istTime")
-    .textContent =
-    `${ist.dateStr} ${String(ist.hh).padStart(2,'0')}:${String(ist.mm).padStart(2,'0')}:${String(ist.ss).padStart(2,'0')}`;
-
-    const price =
-    await fetchSpotPrice();
-
-    if(price!==null){
-
-        document.getElementById("livePrice")
-        .textContent = price;
-
-        checkAndCapture(
-            ist,
-            price
-        );
-    }
-}
-
-function startAlignedPolling(){
-
-    const now = new Date();
-
-    const delay =
-    5000 - (now.getTime()%5000);
-
-    setTimeout(()=>{
-
-        pollTick();
-
-        setInterval(
-            pollTick,
-            5000
-        );
-
-    },delay);
-}
-
-pollTick();
-startAlignedPolling();
+fetchOptionChain();
+setInterval(fetchOptionChain, REFRESH_INTERVAL_MS);
 
 </script>
 
