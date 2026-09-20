@@ -6,13 +6,6 @@
 <style>
   body { font-family: Arial, sans-serif; background: #0d1117; color: #e6edf3; padding: 20px; }
   h2 { color: #58a6ff; }
-  .toggle-group { margin: 15px 0; }
-  .toggle-btn {
-    padding: 10px 25px; margin-right: 10px; border: 1px solid #30363d;
-    background: #161b22; color: #e6edf3; cursor: pointer; font-size: 15px; border-radius: 6px;
-  }
-  .toggle-btn.active-long { background: #238636; border-color: #238636; }
-  .toggle-btn.active-short { background: #da3633; border-color: #da3633; }
   table { border-collapse: collapse; width: 100%; margin-top: 15px; }
   th, td { border: 1px solid #30363d; padding: 12px; text-align: center; }
   th { background: #161b22; }
@@ -43,11 +36,6 @@
 
 <h2>BTC Option Premium Monitor</h2>
 
-<div class="toggle-group">
-  <button id="longBtn" class="toggle-btn active-long">Long (Sell Put)</button>
-  <button id="shortBtn" class="toggle-btn">Short (Sell Call)</button>
-</div>
-
 <div id="error"></div>
 <div id="spotInfo"></div>
 <div id="expiryInfo"></div>
@@ -63,14 +51,14 @@
 <script>
 const BASE_URL = "https://api.india.delta.exchange/v2/tickers";
 const UNDERLYING = "BTC";
-const STRIKE_GAP = 200;
+const STRIKE_GAP_1 = 400;
+const STRIKE_GAP_2 = 600;
 const REFRESH_INTERVAL_MS = 5000;
 
 const ATM_MIN = 100;
 const ATM_MAX = 150;
 const OTM_PCT_MAX = 50;
 
-let currentMode = 'long';
 let latestData = null;
 let alertActive = false;
 
@@ -101,33 +89,6 @@ function findClosestStrike(strikes, spot) {
   return closest;
 }
 
-function setMode(mode) {
-  currentMode = mode;
-
-  document.getElementById('longBtn').classList.toggle(
-    'active-long',
-    mode === 'long'
-  );
-
-  document.getElementById('shortBtn').classList.toggle(
-    'active-short',
-    mode === 'short'
-  );
-
-  alertActive = false;
-  document.getElementById('alertBanner').style.display = 'none';
-
-  if (latestData) {
-    renderTable(latestData);
-  }
-}
-
-document.getElementById('longBtn')
-  .addEventListener('click', () => setMode('long'));
-
-document.getElementById('shortBtn')
-  .addEventListener('click', () => setMode('short'));
-
 function playBeep() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -155,7 +116,6 @@ function playBeep() {
 }
 
 function renderTable(context) {
-
   const {
     strikeMap,
     atmStrike,
@@ -172,49 +132,32 @@ function renderTable(context) {
       ? `Showing 0DTE expiry: ${expiryDisplayStr}`
       : `No 0DTE expiry today. Showing nearest available expiry: ${expiryDisplayStr}`;
 
-  const optionSide = currentMode === 'long' ? 'put' : 'call';
-  const otmStrike = currentMode === 'long'
-    ? (atmStrike - STRIKE_GAP)
-    : (atmStrike + STRIKE_GAP);
+  const atmEntry = strikeMap[atmStrike] ? strikeMap[atmStrike].put : null;
+  const otmStrike1 = atmStrike - STRIKE_GAP_1;
+  const otmStrike2 = atmStrike - STRIKE_GAP_2;
 
-  const otmLabel = currentMode === 'long'
-    ? 'ATM - 200'
-    : 'ATM + 200';
+  const otmEntry1 = strikeMap[otmStrike1] ? strikeMap[otmStrike1].put : null;
+  const otmEntry2 = strikeMap[otmStrike2] ? strikeMap[otmStrike2].put : null;
 
-  const sideLabel = currentMode === 'long'
-    ? 'Put'
-    : 'Call';
+  const atmMark = atmEntry ? parseFloat(atmEntry.mark_price) : null;
+  const otmMark1 = otmEntry1 ? parseFloat(otmEntry1.mark_price) : null;
+  const otmMark2 = otmEntry2 ? parseFloat(otmEntry2.mark_price) : null;
+
+  const otmPctNumeric1 =
+    (otmMark1 !== null && atmMark !== null) ? (otmMark1 / atmMark) * 100 : null;
+
+  const otmPctNumeric2 =
+    (otmMark2 !== null && atmMark !== null) ? (otmMark2 / atmMark) * 100 : null;
 
   document.getElementById('tableHead').innerHTML = `
     <tr>
       <th>Strike Type</th>
       <th>Strike Price</th>
-      <th>${sideLabel} Mark Price</th>
-      <th>${sideLabel} LTP</th>
+      <th>Put Mark Price</th>
+      <th>Put LTP</th>
       <th>% Premium vs ATM</th>
     </tr>
   `;
-
-  const atmEntry = strikeMap[atmStrike]
-    ? strikeMap[atmStrike][optionSide]
-    : null;
-
-  const otmEntry = strikeMap[otmStrike]
-    ? strikeMap[otmStrike][optionSide]
-    : null;
-
-  const atmMark = atmEntry
-    ? parseFloat(atmEntry.mark_price)
-    : null;
-
-  const otmMark = otmEntry
-    ? parseFloat(otmEntry.mark_price)
-    : null;
-
-  const otmPctNumeric =
-    (otmMark !== null && atmMark)
-      ? (otmMark / atmMark) * 100
-      : null;
 
   const rows = [
     {
@@ -224,26 +167,24 @@ function renderTable(context) {
       pct: atmEntry ? '100%' : 'N/A'
     },
     {
-      label: otmLabel,
-      strike: otmStrike,
-      entry: otmEntry,
-      pct: otmPctNumeric !== null
-        ? Math.round(otmPctNumeric) + '%'
-        : 'N/A'
+      label: 'ATM - 400',
+      strike: otmStrike1,
+      entry: otmEntry1,
+      pct: otmPctNumeric1 !== null ? Math.round(otmPctNumeric1) + '%' : 'N/A'
+    },
+    {
+      label: 'ATM - 600',
+      strike: otmStrike2,
+      entry: otmEntry2,
+      pct: otmPctNumeric2 !== null ? Math.round(otmPctNumeric2) + '%' : 'N/A'
     }
   ];
 
   let html = '';
 
   rows.forEach(row => {
-
-    const mark = row.entry
-      ? Math.round(parseFloat(row.entry.mark_price))
-      : 'N/A';
-
-    const ltp = row.entry
-      ? Math.round(parseFloat(row.entry.close))
-      : 'N/A';
+    const mark = row.entry ? Math.round(parseFloat(row.entry.mark_price)) : 'N/A';
+    const ltp = row.entry ? Math.round(parseFloat(row.entry.close)) : 'N/A';
 
     html += `
       <tr>
@@ -257,7 +198,6 @@ function renderTable(context) {
   });
 
   document.getElementById('tableBody').innerHTML = html;
-
   document.getElementById('status').textContent =
     `Last updated: ${new Date().toLocaleTimeString()}`;
 
@@ -265,24 +205,26 @@ function renderTable(context) {
     atmMark !== null &&
     atmMark > ATM_MIN &&
     atmMark < ATM_MAX &&
-    otmPctNumeric !== null &&
-    otmPctNumeric < OTM_PCT_MAX;
+    ((otmPctNumeric1 !== null && otmPctNumeric1 < OTM_PCT_MAX) ||
+     (otmPctNumeric2 !== null && otmPctNumeric2 < OTM_PCT_MAX));
 
   const banner = document.getElementById('alertBanner');
 
   if (conditionMet) {
+    const qualifying =
+      otmPctNumeric1 !== null && otmPctNumeric1 < OTM_PCT_MAX
+        ? { label: 'ATM - 400', pct: otmPctNumeric1 }
+        : { label: 'ATM - 600', pct: otmPctNumeric2 };
 
     banner.style.display = 'block';
-
     banner.textContent =
-      `ALERT: ATM ${sideLabel} Mark Price (${Math.round(atmMark)}) is between ${ATM_MIN}-${ATM_MAX}, ` +
-      `and ${otmLabel} ${sideLabel} premium is ${Math.round(otmPctNumeric)}% of ATM (below ${OTM_PCT_MAX}%).`;
+      `ALERT: ATM Put Mark Price (${Math.round(atmMark)}) is between ${ATM_MIN}-${ATM_MAX}, ` +
+      `and ${qualifying.label} Put premium is ${Math.round(qualifying.pct)}% of ATM (below ${OTM_PCT_MAX}%).`;
 
     if (!alertActive) {
       playBeep();
       alertActive = true;
     }
-
   } else {
     banner.style.display = 'none';
     alertActive = false;
@@ -290,12 +232,9 @@ function renderTable(context) {
 }
 
 async function fetchOptionChain() {
-
-  const url =
-    `${BASE_URL}?contract_types=call_options,put_options&underlying_asset_symbols=${UNDERLYING}`;
+  const url = `${BASE_URL}?contract_types=put_options&underlying_asset_symbols=${UNDERLYING}`;
 
   try {
-
     const response = await fetch(url);
 
     if (!response.ok) {
@@ -305,49 +244,37 @@ async function fetchOptionChain() {
     const data = await response.json();
 
     if (!data.success || !data.result || data.result.length === 0) {
-
-      document.getElementById('error').textContent =
-        'No live BTC option data found.';
-
+      document.getElementById('error').textContent = 'No live BTC option data found.';
       document.getElementById('tableBody').innerHTML = '';
       document.getElementById('tableHead').innerHTML = '';
       document.getElementById('spotInfo').textContent = '';
       document.getElementById('expiryInfo').textContent = '';
-
       return;
     }
 
     document.getElementById('error').textContent = '';
 
     const tickers = data.result;
-
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-
     const expiryGroups = {};
 
     tickers.forEach(t => {
-
       const expiryDate = parseExpiryFromSymbol(t.symbol);
-
       if (!expiryDate) return;
 
       const key = expiryDate.getTime();
-
       if (!expiryGroups[key]) {
         expiryGroups[key] = [];
       }
-
       expiryGroups[key].push(t);
     });
 
-    const expiryKeys =
-      Object.keys(expiryGroups)
+    const expiryKeys = Object.keys(expiryGroups)
       .map(Number)
       .sort((a, b) => a - b);
 
     let chosenExpiryKey = null;
-
     for (const key of expiryKeys) {
       if (key >= today.getTime()) {
         chosenExpiryKey = key;
@@ -360,41 +287,25 @@ async function fetchOptionChain() {
     }
 
     if (chosenExpiryKey === null) {
-      document.getElementById('error').textContent =
-        'Could not determine any valid expiry.';
+      document.getElementById('error').textContent = 'Could not determine any valid expiry.';
       return;
     }
 
     const chosenExpiryDate = new Date(chosenExpiryKey);
-
-    const isZeroDTE =
-      chosenExpiryDate.getTime() === today.getTime();
-
-    const expiryDisplayStr =
-      chosenExpiryDate.toLocaleDateString('en-GB');
-
-    const relevantTickers =
-      expiryGroups[chosenExpiryKey];
-
-    const spotPrice =
-      parseFloat(relevantTickers[0].spot_price);
+    const isZeroDTE = chosenExpiryDate.getTime() === today.getTime();
+    const expiryDisplayStr = chosenExpiryDate.toLocaleDateString('en-GB');
+    const relevantTickers = expiryGroups[chosenExpiryKey];
+    const spotPrice = parseFloat(relevantTickers[0].spot_price);
 
     const strikeMap = {};
     const strikeSet = new Set();
 
     relevantTickers.forEach(t => {
-
-      const strike =
-        parseFloat(t.strike_price);
-
+      const strike = parseFloat(t.strike_price);
       strikeSet.add(strike);
 
       if (!strikeMap[strike]) {
         strikeMap[strike] = {};
-      }
-
-      if (t.contract_type === 'call_options') {
-        strikeMap[strike].call = t;
       }
 
       if (t.contract_type === 'put_options') {
@@ -403,9 +314,7 @@ async function fetchOptionChain() {
     });
 
     const strikesArray = Array.from(strikeSet);
-
-    const atmStrike =
-      findClosestStrike(strikesArray, spotPrice);
+    const atmStrike = findClosestStrike(strikesArray, spotPrice);
 
     latestData = {
       strikeMap,
@@ -418,15 +327,12 @@ async function fetchOptionChain() {
     renderTable(latestData);
 
   } catch (err) {
-
-    document.getElementById('error').textContent =
-      `Error fetching data: ${err.message}`;
+    document.getElementById('error').textContent = `Error fetching data: ${err.message}`;
   }
 }
 
 fetchOptionChain();
 setInterval(fetchOptionChain, REFRESH_INTERVAL_MS);
-
 </script>
 
 </body>
