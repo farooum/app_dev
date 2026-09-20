@@ -144,10 +144,10 @@ function renderTable(context) {
   const otmMark2 = otmEntry2 ? parseFloat(otmEntry2.mark_price) : null;
 
   const otmPctNumeric1 =
-    (otmMark1 !== null && atmMark !== null) ? (otmMark1 / atmMark) * 100 : null;
+    (otmMark1 !== null && otmMark2 !== null) ? (otmMark2 / otmMark1) * 100 : null;
 
   const otmPctNumeric2 =
-    (otmMark2 !== null && atmMark !== null) ? (otmMark2 / atmMark) * 100 : null;
+    (otmMark2 !== null && otmMark1 !== null) ? (otmMark2 / otmMark1) * 100 : null;
 
   document.getElementById('tableHead').innerHTML = `
     <tr>
@@ -155,22 +155,16 @@ function renderTable(context) {
       <th>Strike Price</th>
       <th>Put Mark Price</th>
       <th>Put LTP</th>
-      <th>% Premium vs ATM</th>
+      <th>% Premium vs ATM-400</th>
     </tr>
   `;
 
   const rows = [
     {
-      label: 'ATM',
-      strike: atmStrike,
-      entry: atmEntry,
-      pct: atmEntry ? '100%' : 'N/A'
-    },
-    {
       label: 'ATM - 400',
       strike: otmStrike1,
       entry: otmEntry1,
-      pct: otmPctNumeric1 !== null ? Math.round(otmPctNumeric1) + '%' : 'N/A'
+      pct: '100%'
     },
     {
       label: 'ATM - 600',
@@ -182,9 +176,10 @@ function renderTable(context) {
 
   let html = '';
 
-  rows.forEach(row => {
+  rows.forEach((row, index) => {
     const mark = row.entry ? Math.round(parseFloat(row.entry.mark_price)) : 'N/A';
     const ltp = row.entry ? Math.round(parseFloat(row.entry.close)) : 'N/A';
+    const pct = index === 0 ? '100%' : row.pct;
 
     html += `
       <tr>
@@ -192,7 +187,7 @@ function renderTable(context) {
         <td>${row.strike}</td>
         <td>${mark}</td>
         <td>${ltp}</td>
-        <td>${row.pct}</td>
+        <td>${pct}</td>
       </tr>
     `;
   });
@@ -205,21 +200,16 @@ function renderTable(context) {
     atmMark !== null &&
     atmMark > ATM_MIN &&
     atmMark < ATM_MAX &&
-    ((otmPctNumeric1 !== null && otmPctNumeric1 < OTM_PCT_MAX) ||
-     (otmPctNumeric2 !== null && otmPctNumeric2 < OTM_PCT_MAX));
+    otmPctNumeric2 !== null &&
+    otmPctNumeric2 < OTM_PCT_MAX;
 
   const banner = document.getElementById('alertBanner');
 
   if (conditionMet) {
-    const qualifying =
-      otmPctNumeric1 !== null && otmPctNumeric1 < OTM_PCT_MAX
-        ? { label: 'ATM - 400', pct: otmPctNumeric1 }
-        : { label: 'ATM - 600', pct: otmPctNumeric2 };
-
     banner.style.display = 'block';
     banner.textContent =
       `ALERT: ATM Put Mark Price (${Math.round(atmMark)}) is between ${ATM_MIN}-${ATM_MAX}, ` +
-      `and ${qualifying.label} Put premium is ${Math.round(qualifying.pct)}% of ATM (below ${OTM_PCT_MAX}%).`;
+      `and ATM-600 Put premium is ${Math.round(otmPctNumeric2)}% of ATM-400 (below ${OTM_PCT_MAX}%).`;
 
     if (!alertActive) {
       playBeep();
